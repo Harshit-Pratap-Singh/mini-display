@@ -3,3 +3,8 @@
 *.bin
 *.elf
 *.map
+
+# ours
+backup/
+secrets/
+platformio.local.ini
