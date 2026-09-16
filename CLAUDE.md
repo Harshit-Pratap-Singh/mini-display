@@ -146,8 +146,8 @@ HARDWARE.md          verified pins, display settings, flash size, strings findin
 - Serve HTML from PROGMEM.
 
 ## Milestones — in order, test on hardware at every step
-1. **Identify & back up.** Find the serial port. `esptool chip_id` → expect ESP8266EX. `esptool flash_id` → note size. `esptool -b 921600 read_flash 0 ALL backup/stock_backup.bin`; verify file size == flash size. `strings -n 6 backup/stock_backup.bin | grep -iE 'geek|smalltv|http|ssid|ver'` to identify vendor/features. Write `HARDWARE.md`. If esptool can't sync: hold GPIO0 (DC pad / through-hole) to GND while plugging in. If no serial port appears at all: USB-TTL adapter on the UART pads.
-2. **Base firmware bring-up.** Clone `iodn/geekmagic-tv-esp8266`, read its README and license, build it for `esp12e`, flash it (only after the backup is verified), and confirm the display, button and backlight work. That doubles as pin verification: garbage or black screen → multimeter, fix its pin flags, record the result. If it works, our repo becomes a fork of it. If it cannot be made to work, fall back to a from-scratch color-bar test with the hypothesis pins and continue from-scratch. Update the pin table above, `HARDWARE.md` and `platformio.ini`.
+1. ✅ DONE 2026-09-16 — **Identify & back up.** Find the serial port. `esptool chip_id` → expect ESP8266EX. `esptool flash_id` → note size. `esptool -b 921600 read_flash 0 ALL backup/stock_backup.bin`; verify file size == flash size. `strings -n 6 backup/stock_backup.bin | grep -iE 'geek|smalltv|http|ssid|ver'` to identify vendor/features. Write `HARDWARE.md`. If esptool can't sync: hold GPIO0 (DC pad / through-hole) to GND while plugging in. If no serial port appears at all: USB-TTL adapter on the UART pads.
+2. ✅ DONE 2026-09-16 — **Base firmware bring-up.** Clone `iodn/geekmagic-tv-esp8266`, read its README and license, build it for `esp12e`, flash it (only after the backup is verified), and confirm the display, button and backlight work. That doubles as pin verification: garbage or black screen → multimeter, fix its pin flags, record the result. If it works, our repo becomes a fork of it. If it cannot be made to work, fall back to a from-scratch color-bar test with the hypothesis pins and continue from-scratch. Update the pin table above, `HARDWARE.md` and `platformio.ini`.
 3. **Network + clock mode.** Verify the base firmware's WiFi setup, config storage, NTP and OTA on our board; restyle its clock page to our layout; add button mode cycling with placeholders for the other modes.
 4. **Weather.** Verify its Open-Meteo page against our layout; add icons and graceful offline behaviour where missing.
 5. **Photo frame.** `prepare_images.py`, extend its upload page, JPEG slideshow, then GIF playback; record fps and heap in `HARDWARE.md`.
@@ -158,7 +158,7 @@ HARDWARE.md          verified pins, display settings, flash size, strings findin
 - Small, hardware-verified commits per milestone; include heap/fps numbers in commit messages where relevant.
 - When something doesn't fit in RAM/flash, trim features (fonts, TLS ciphers, page HTML) rather than adding buffers. A helper server (PC/Pi renders images for the ESP) is the last-resort fallback: note it, don't build it unless milestone 6 fails.
 - `HARDWARE.md` is the single source of truth for pins and display settings once verified; keep the hypothesis table here in sync.
-- Stop and show results before every flash operation until milestone 2 is done.
+- Stop and show results before every flash operation (still the rule; the user approves each flash).
 
 ## References
 - Base firmware (see Starting point): https://github.com/iodn/geekmagic-tv-esp8266
@@ -170,5 +170,25 @@ HARDWARE.md          verified pins, display settings, flash size, strings findin
 - esptool docs: https://docs.espressif.com/projects/esptool/
 - TFT_eSPI, TJpg_Decoder (Bodmer) and AnimatedGIF (bitbank2) on GitHub
 
-## Kickoff prompt (paste as the first message in Claude Code)
-> Read CLAUDE.md fully. The board is plugged into this computer over USB-C. Start milestone 1: find the serial port, run esptool chip_id and flash_id, back up the full flash to backup/stock_backup.bin and verify its size, then analyse the backup with strings and write HARDWARE.md. Then prepare milestone 2: clone iodn/geekmagic-tv-esp8266, check its license, and build it for esp12e — but stop and show me the results before flashing anything.
+## Status — resume here (updated 2026-09-17)
+**Done:** milestones 1 and 2 (commit `bffd2b6` and the docs commit after it). Stock firmware backed up and verified (`backup/stock_backup.bin`, git-ignored, sha256 in HARDWARE.md). Repo is a fork of iodn @ `d703c12`; `[env:esp12e]` builds and runs on the board; pins and display settings verified. **HARDWARE.md is the source of truth** for hardware facts, heap numbers and the space-budget cut list.
+
+**Device state right now:** running the iodn esp12e build. No WiFi credentials saved → failsafe AP `SmartClock-Setup` (8-digit password shown on screen, regenerates every boot), dashboard at http://192.168.4.1, login `admin` with the 10-digit password shown on screen/serial.
+
+**Open decisions — resolve at the start of milestone 3:**
+- **No physical button on this board.** The button-driven mode switching in "Mode logic" needs a replacement: web-UI mode setting + Spotify auto mode + optional timed cycle. Update "Mode logic" once decided.
+- **Heap is ~17 KB free after web server init (AP mode)**, not the 40–50 KB assumed. Before adding Spotify/GIF, follow the cut list in HARDWARE.md → "Space budget". Stripping unused upstream features (markets, Home Assistant, quote, focus, world clocks, countdown, WiFiManager) is approved.
+
+**Commands (macOS, this board):**
+```
+pio run -e esp12e                                                    # build
+pio run -e esp12e -t upload --upload-port /dev/cu.usbserial-10       # flash — 115200 only, 460800+ corrupts on this CH340
+pio device monitor -p /dev/cu.usbserial-10 -b 115200                 # opening the port resets the board (auto-reset)
+esptool --port /dev/cu.usbserial-10 -b 115200 write-flash 0 backup/stock_backup.bin   # restore stock firmware
+```
+Installed: Homebrew esptool 5.4.0, platformio 6.2.0. Not yet installed (needed from milestone 5): `brew install gifsicle`, Pillow.
+
+**Next — milestone 3:** join `SmartClock-Setup`, set home WiFi in the dashboard, then verify NTP, settings persistence across reboot, web OTA and ArduinoOTA on this board. Then restyle the clock page to our layout and implement button-less mode switching. Record STA-mode free heap in HARDWARE.md.
+
+## Kickoff prompt for the next session
+> Read CLAUDE.md and HARDWARE.md. Resume at milestone 3 per the Status section: the board is on /dev/cu.usbserial-10 running the iodn esp12e build in setup-AP mode. First agree the button-less mode-switching approach with me, then verify WiFi setup, NTP, settings persistence and OTA, recording heap numbers in HARDWARE.md. Stop and show me before every flash.

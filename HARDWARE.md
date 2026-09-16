@@ -75,3 +75,21 @@ Display VERIFIED: ST7789, 240×240, no offsets, SPI mode 3 (TFT_eSPI default for
 
 - **RAM is tighter than CLAUDE.md's 40–50 KB estimate.** A BearSSL session (~20 KB) does not fit in this headroom as-is; milestone 6 will need trimming (fonts, page HTML, feeds we don't use) and/or the IRAM second heap. Measure in STA mode too (softAP costs extra).
 - Visual check (user, 2026-09-16): setup screen readable, colours correct, backlight on → SCLK 14 / MOSI 13 / DC 0 / RST 2 / no CS / BL 5 verified. **No user button exists**, so CLAUDE.md’s button-driven mode switching needs a replacement (web UI, auto mode, timed cycle).
+
+## Space budget — what to cut when flash or heap runs out (measured 2026-09-16)
+Object sizes from `xtensa-lx106-elf-size` on the esp12e build (pre-link; real savings are a bit lower, confirm with `pio run`). User decision: strip any upstream feature that is not one of our three modes.
+
+| Module / lib | Flash (text+rodata) | Static RAM | Verdict |
+|---|---|---|---|
+| WiFiManager (tzapu) | 72.9 KB | ~0 | Biggest lever. iodn already has its own failsafe AP + `/wifi` scan/join routes; replace WiFiManager with those + DNSServer if still short after the cuts below. |
+| TFT_eSPI | 65.9 KB | ~0 | Keep. Drop unused fonts (`LOAD_FONT7` 7-segment, maybe `LOAD_FONT6`) for a few KB. |
+| feeds.cpp | 58.3 KB | 3.6 KB | Keep Open-Meteo only. Drop CoinGecko/Finnhub markets, Home Assistant, quote. Also frees runtime heap (HTTP clients + JSON docs). |
+| webserver.cpp | 49.1 KB | 0.8 KB | Drop routes for removed feeds/pages and the GeekMagic-compat endpoints. |
+| dashboard.cpp | 34.4 KB | 1.3 KB | Drop dashboard sections for markets / HA / focus / world clocks / countdown / quote. |
+| display.cpp | 25.7 KB | 1.0 KB | Drop renderers for PAGE_MARKETS, PAGE_HOME, PAGE_FOCUS, PAGE_WORLD, PAGE_EVENT, PAGE_QUOTE. Keep clock, weather, status. |
+| auth.cpp | 12.3 KB | ~0 | Keep (trust boundary). |
+| ArduinoOTA + HTTPClient | 15.7 KB | 0.2 KB | Keep (OTA required). |
+| SD / SDFS / SdFat | 5.8 KB | ~0 | Not used by us; pulled in transitively — find the includer and drop. |
+| logger.cpp | 0.5 KB | 1.5 KB | Shrink ring buffer if RAM-bound. |
+
+Order of operations: (1) `-D BEARSSL_SSL_BASIC` build flag (one line, trims cipher suites); (2) delete markets/HA/quote/focus/world/event feature slices end-to-end (feed + page + route + dashboard section); (3) fonts; (4) WiFiManager replacement only if still needed. Measure and log heap after each step.
