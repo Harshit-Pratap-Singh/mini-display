@@ -196,7 +196,9 @@ Installed: Homebrew esptool 5.4.0, platformio 6.2.0. Not yet installed (needed f
 **Still to do in milestone 3:**
 - **Web OTA (`/update`) is still unverified** — the upload was blocked by a local tooling permission, not by the device. Retry with a browser or an allowed curl.
 - **ArduinoOTA + mDNS never start** (heap 19 KB < the 28,000 B `kOptionalServiceMinFreeHeapBytes` gate in `src/main.cpp`). Lower the gate in commit B, then test `espota`.
-- **Commit B:** the approved strip (HARDWARE.md “Space budget”) + the heap gate + the `clearImageDirectory()` fix (images currently survive reboots — confirmed on hardware; must be fixed before milestone 5).
+- ~~**Commit B:** the approved strip~~ **Done differently and better:** 198 KB of flash reclaimed with **no features removed** — gzip the embedded web pages (~130 KB), drop SD/SdFat (~22 KB), drop WiFiManager (~55 KB). Sketch is now 66.6% full with 348 KB free. See HARDWARE.md “Space budget” for the measured table and the per-feature list still available if ever needed.
+- **Still to do:** lower `kOptionalServiceMinFreeHeapBytes` (28,000) in `src/main.cpp` so mDNS/ArduinoOTA start, then test `espota`; fix `clearImageDirectory()` (images currently survive reboots — confirmed on hardware; must be fixed before milestone 5).
+- **Heap, not flash, is now the constraint for Spotify** — but the trim helped there too: free heap rose from 18,568 to **21,408 B** steady (STA), against ~16 KB for one BearSSL receive buffer. Milestone 6 is now plausible without deleting any display page; confirm MFLN behaviour with `api.spotify.com` when we get there.
 - **Commit C:** clock restyle to our layout.
 
 ## Kickoff prompt for the next session

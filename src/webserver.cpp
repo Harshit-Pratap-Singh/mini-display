@@ -7,12 +7,11 @@
 #include "auth.h"
 #include "logger.h"
 #include "settings.h"
-#include "webui.h"
+#include "webui_gz.h"
 #include <ArduinoJson.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266WiFi.h>
 #include <LittleFS.h>
-#include <WiFiManager.h>
 #include <ctype.h>
 
 ESP8266WebServer server(WEB_SERVER_PORT);
@@ -57,6 +56,13 @@ constexpr unsigned long kWiFiIpWaitTimeoutMs = 10000UL;
 constexpr unsigned long kAuthSessionDurationMs = 12UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t kAuthSessionMaxAgeSec = 12UL * 60UL * 60UL;
 constexpr char kAuthSessionCookieName[] = "SCSESSID";
+
+// The dashboard and OTA pages are stored gzipped (see tools/prebuild.py); every browser
+// that can reach this device accepts gzip, so we always send it compressed.
+void sendGzipHtml(const uint8_t *page, size_t length) {
+    server.sendHeader("Content-Encoding", "gzip");
+    server.send_P(200, "text/html", reinterpret_cast<const char *>(page), length);
+}
 
 void prepareNoStoreHeaders() {
     server.sendHeader("Cache-Control", "no-store, max-age=0");
@@ -1146,7 +1152,7 @@ void handleFactoryReset() {
 
 void handleOTAForm() {
     prepareNoStoreHeaders();
-    server.send_P(200, "text/html", ota_html);
+    sendGzipHtml(ota_html_gz, ota_html_gz_len);
 }
 
 void handleOTAUpload() {
@@ -1237,7 +1243,7 @@ void handleRoot() {
     }
 
     prepareNoStoreHeaders();
-    server.send_P(200, "text/html", index_html);
+    sendGzipHtml(index_html_gz, index_html_gz_len);
 }
 
 void webserverInit() {

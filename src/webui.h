@@ -1,3 +1,6 @@
+// NOTE: this file is the editable source for the dashboard pages, but it is NOT compiled in.
+// tools/prebuild.py gzips these strings into src/webui_gz.h on every build (~141 KB -> ~24 KB)
+// and webserver.cpp includes that instead. Edit here; the compressed copy regenerates itself.
 #ifndef WEBUI_H
 #define WEBUI_H
 

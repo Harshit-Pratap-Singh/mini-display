@@ -150,7 +150,69 @@ Result: 3 of 3 cold boots synced in **20-25 s**; the retry never had to fire. Co
 
 **Probing the device clock over HTTP** (no serial needed): `POST /dashboard/data {"focus":{"remainingSeconds":1500}}` makes the device stamp `dashboardCurrentEpoch()`, then read `data.focus.updatedAtEpoch` from `/dashboard.json`. It is 0 when unsynced.
 
-## Space budget — what to cut when flash or heap runs out (measured 2026-09-16)
+## Space budget — measured 2026-09-17 with a link map, and what we took back
+
+Method: `PLATFORMIO_BUILD_FLAGS="-Wl,-Map=/tmp/fw.map" pio run -e esp12e`, then sum the loadable sections (`.text`, `.rodata`, `.irom.text`, `.irom0.text`, `.data`) per object. **The earlier estimates in this file were wrong in two places** — the dashboard HTML is far bigger than assumed, and SD support costs 22 KB, not 6.
+
+Biggest items in the 894 KB sketch before trimming:
+
+| Component | Bytes | Note |
+|---|---|---|
+| `index_html` (dashboard page) | 140,849 | one PROGMEM blob, 13.5% of the whole sketch slot |
+| BearSSL | 113,318 | keep — Spotify needs TLS even after the HTTPS feeds go |
+| lwIP | 91,588 | keep |
+| Arduino core | 87,747 | keep |
+| TFT_eSPI | 63,860 | keep |
+| `feeds.cpp` | 51,290 | weather + markets + Home Assistant |
+| WiFiManager | 54,761 | removed |
+| `ota_html` | 17,834 | OTA upload page |
+| mDNS | 28,110 | still linked, still never starts (heap gate) |
+| `dashboard.cpp` | 29,488 | |
+| ESP8266SdFat | 21,664 | removed |
+| `display.cpp` | 19,724 | |
+
+### Trim applied (commit after `6841011`) — 198,160 B of flash, no features lost
+| Change | Saved |
+|---|---|
+| gzip `index_html` (140,848 → 23,591 B) and `ota_html` (17,833 → 4,953 B), served with `Content-Encoding: gzip` | ~130 KB |
+| drop SD/SdFat, pulled in by TJpg_Decoder's bundled `User_Config.h` (`TJPGD_LOAD_SD_LIBRARY`) on a board with no SD slot | ~22 KB |
+| remove WiFiManager (tzapu): it only ran when saved credentials failed, duplicating the failsafe AP + dashboard scan/join we already have | ~55 KB |
+
+| Build | Before | After |
+|---|---|---|
+| Flash | 894,087 B (85.6%) | **695,927 B (66.6%)** |
+| Static RAM | 54,088 B (66.0%) | **51,900 B (63.4%)** |
+| Free sketch space | 150,377 B | **348,537 B** |
+
+**Free heap also rose by 2,840 B at every stage** (measured on hardware after flashing, STA mode) — more than the 2-5 KB guess, because dropping WiFiManager and SdFat removes their static allocations too:
+
+| Free heap, STA | Before | After |
+|---|---|---|
+| after display init | 24,656 | **27,496** |
+| after FS/auth/dashboard/feeds init | 24,440 | **27,280** |
+| after WiFi connected | 23,296 | **26,136** |
+| after web server init | 19,072 | **21,912** |
+| steady state | 18,568 | **21,408** |
+
+Verified on hardware after flashing: `GET /` returns 23,591 B on the wire with `Content-Encoding: gzip` and `Content-Length: 23591`, decompressing to exactly 140,848 B of valid HTML; `GET /update` returns 4,953 B → 17,833 B; JSON routes are unchanged and uncompressed; `POST /page` still works; settings survived the flash. mDNS/ArduinoOTA still deferred (21,408 < the 28,000 B gate).
+
+`tools/prebuild.py` is a PlatformIO `pre:` hook doing the gzip and the TJpg patch on every build; verified it also works on a clean checkout (dependencies install before it runs). `src/webui.h` stays the editable source and is no longer compiled; `src/webui_gz.h` is generated and git-ignored. Gzip round-trip verified byte-for-byte against the originals.
+
+Two consequences of this trim, both accepted:
+- **The dashboard and OTA pages are now always gzipped**, with no `Accept-Encoding` check (the uncompressed copy is deliberately not on the device, and `ESP8266WebServer` only collects request headers you register). Browsers are unaffected. Plain `curl http://<ip>/` now returns gzip bytes — use **`curl --compressed`**. The JSON API routes are unaffected.
+- **WiFiManager's captive-portal popup is gone** from the one path that used it: saved credentials that stop working. There is no `DNSServer` anywhere in this firmware (before or after), so the "no credentials saved" path never had that popup either. On either path you browse to `192.168.4.1` manually.
+
+**Flash is no longer the constraint; heap is.** Free heap is still ~18.5 KB and one BearSSL session wants ~16 KB of receive buffer (`kHttpsDefaultRecvBufferBytes`, `src/feeds.cpp`). Stripping the remaining display pages would free only ~2-5 KB of RAM, so milestone 6 depends on MFLN working with `api.spotify.com` or on smaller BearSSL buffers, not on more deletions.
+
+### Still available if ever needed (not taken — no feature loss was required)
+| Candidate | Flash | What you lose |
+|---|---|---|
+| Markets page + Finnhub/CoinGecko feeds | ~28 KB | stock/crypto tickers |
+| Home Assistant page + feed | ~32 KB | HA entity cards; also the worst TLS heap case (up to 4 sessions per cycle) |
+| Focus / World / Event / Quote / Status pages | ~27 KB total | pomodoro timer, 2 world clocks, countdown, quote, free-text page |
+| mDNS | ~28 KB | `smartclock-<id>.local` names |
+
+## Space budget — original cut list (superseded by the table above) — what to cut when flash or heap runs out (measured 2026-09-16)
 Object sizes from `xtensa-lx106-elf-size` on the esp12e build (pre-link; real savings are a bit lower, confirm with `pio run`). User decision: strip any upstream feature that is not one of our three modes.
 
 | Module / lib | Flash (text+rodata) | Static RAM | Verdict |

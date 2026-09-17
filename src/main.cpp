@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <WiFiManager.h>
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
 #include <LittleFS.h>
@@ -233,66 +232,16 @@ bool tryConnectWiFi(int maxAttempts) {
 
                 } else {
 
-                    // Connection failed, try WiFiManager config portal
-
-                    Serial.println(F("WiFi connection failed - attempting WiFiManager config portal"));
-
+                    // Saved credentials did not work: fall straight through to our own
+                    // failsafe AP, which serves the dashboard with WiFi scan + join.
+                    // (Upstream ran a WiFiManager captive portal here; that library cost
+                    // ~55 KB of flash to duplicate what the dashboard already does.)
+                    Serial.println(F("WiFi connection failed - starting failsafe AP"));
                     displayShowMessage(F("WiFi Failed!\nStarting AP..."));
-
                     delay(1000);
-
-        
-
-                    // Set timeout - don't reset settings, let WiFiManager try saved credentials first
-                    WiFiManager wifiManager;
-                    wifiManager.setConfigPortalTimeout(WIFI_TIMEOUT);
-                    applyConfiguredHostname();
-
-                    Serial.printf("Starting WiFiManager autoConnect (timeout: %d seconds)...\n", WIFI_TIMEOUT);
-
-                    displayShowMessage(F("Config Portal\nStarting..."));
-
-                    yield();
-
-        
-
-                    // Try autoConnect with error handling
-
-                    Serial.println(F("Calling wifiManager.autoConnect()..."));
-
-                    bool connectedViaManager = wifiManager.autoConnect(WIFI_AP_NAME, apPassword.c_str());
-
-                    yield();
-
-                    Serial.printf("autoConnect returned: %s\n", connectedViaManager ? "true" : "false");
-
-        
-
-                    if (!connectedViaManager) {
-
-                        needsFailsafeAP = true;
-
-                    } else {
-
-                        wifiFailsafeMode = false;
-
-                        Serial.println(F("WiFiManager connected successfully!"));
-
-                        char ipMsgBuffer[64];
-                        snprintf(ipMsgBuffer, sizeof(ipMsgBuffer), "WiFi OK\n%s", WiFi.localIP().toString().c_str());
-                        displayShowMessage(ipMsgBuffer);
-
-                        delay(2000);
-
-                        return; // Exit setupWiFi as connection is established via manager
-
-                    }
-
+                    needsFailsafeAP = true;
                 }
-
             }
-
-        
 
             // This block is executed only if needsFailsafeAP is true
 
