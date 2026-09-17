@@ -36,7 +36,10 @@ constexpr uint32_t kBootSuccessConfirmMs = 30000UL;
 constexpr uint32_t kClockSpriteWarmupMs = 8000UL;
 constexpr uint32_t kDisplayProfileCheckMs = 15000UL;
 constexpr uint32_t kOptionalServiceWarmupMs = 1500UL;
-constexpr uint32_t kOptionalServiceMinFreeHeapBytes = 28000UL;
+// Steady-state free heap on this board is ~21.4 KB, so the upstream 28 KB gate meant mDNS and
+// ArduinoOTA never started at all. 12 KB still leaves room for the HTTPS feeds, which refuse
+// to run below kHttpsMinFreeHeapBytes (15 KB) themselves.
+constexpr uint32_t kOptionalServiceMinFreeHeapBytes = 12000UL;
 constexpr uint32_t kOptionalServiceRetryLogMs = 5000UL;
 constexpr uint32_t kTimeSyncRetryMs = 60000UL;
 
@@ -534,22 +537,6 @@ void maybeEnableClockSprite() {
     logPrint(F("Clock sprite warmup complete"));
 }
 
-void clearImageDirectory() {
-    logPrint("Clearing image directory: " + String(IMAGE_DIR));
-    Dir dir = LittleFS.openDir(IMAGE_DIR);
-    int filesDeleted = 0;
-    while (dir.next()) {
-        String filepath = dir.fileName();
-        if (LittleFS.remove(filepath)) {
-            logPrintf("Deleted: %s", filepath.c_str());
-            filesDeleted++;
-        } else {
-            logPrintf("Failed to delete: %s", filepath.c_str());
-        }
-    }
-    logPrintf("Cleared %d files from image directory.", filesDeleted);
-}
-
 void setupFilesystem() {
 
     //LittleFS.format();
@@ -584,7 +571,6 @@ void setupFilesystem() {
 
 
 
-    clearImageDirectory(); // Call the new function here
 
 }
 
@@ -725,11 +711,6 @@ void setup() {
         currentTheme = dashboardConfig.theme;
         webserverApplyEffectiveBrightness(true);
 
-        if (appSettings.lastImage[0] != '\0') {
-            logPrint(F("Clearing stale image path after temporary image cleanup"));
-            appSettings.lastImage[0] = '\0';
-            settingsSave(appSettings);
-        }
 
 
 
@@ -754,7 +735,7 @@ void setup() {
 
 
 
-    // Always default to clock display on boot as images are cleared
+    // Uploaded images persist; just don't auto-show one on boot.
 
     displayState.showImage = false;
 

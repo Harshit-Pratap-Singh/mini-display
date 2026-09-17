@@ -150,6 +150,29 @@ Result: 3 of 3 cold boots synced in **20-25 s**; the retry never had to fire. Co
 
 **Probing the device clock over HTTP** (no serial needed): `POST /dashboard/data {"focus":{"remainingSeconds":1500}}` makes the device stamp `dashboardCurrentEpoch()`, then read `data.focus.updatedAtEpoch` from `/dashboard.json`. It is 0 when unsynced.
 
+## Optional services + image persistence (2026-09-17, commit `2c76796`)
+
+**mDNS and ArduinoOTA now actually run.** Upstream gated them on ≥28,000 B free heap (`kOptionalServiceMinFreeHeapBytes`, `src/main.cpp`), which this board never reached, so they had never started once. Lowered to **12,000 B**, still clear of the HTTPS feeds' own 15,000 B floor (`kHttpsMinFreeHeapBytes`, `src/feeds.cpp`).
+
+| Boot stage, STA | Free heap |
+|---|---|
+| after web server init | 22,008 |
+| after time services init | 22,008 |
+| after mDNS init | 21,320 (mDNS costs ~688 B) |
+| after OTA init | 20,488 (ArduinoOTA costs ~832 B) |
+| steady state | 20,344 |
+
+Both services together cost ~1,520 B, and steady-state heap (20,344 B) is still ~1.8 KB **above** the pre-trim baseline of 18,568 B.
+
+Verified on hardware:
+- `smartclock-e1cf2e.local` resolves and pings (192.168.1.14) — first time on this board.
+- **ArduinoOTA works**: `python ~/.platformio/packages/framework-arduinoespressif8266/tools/espota.py -i smartclock-e1cf2e.local -p 8266 --auth=<admin password> -f .pio/build/esp12e/firmware.bin -r` → `Authenticating...OK`, 100%, device rebooted and came back. Auth is the dashboard admin password (`ArduinoOTA.setPasswordHash(authOtaPasswordHash())` = its MD5).
+- Web `/update` still not exercised from here (a local tooling permission blocks the upload); the route and page serve fine.
+
+**Uploaded images now persist across reboots, on purpose.** `clearImageDirectory()` and the "clear stale image path" block are deleted from `src/main.cpp`. The function had never worked anyway (it passed a bare filename to `LittleFS.remove()`), and the photo frame in milestone 5 needs images to survive. Verified: uploaded a JPEG, rebooted, `POST /image/show` displayed it and `/app.json` reported the path; free space was identical before and after the reboot.
+
+Note: there is **no GET route for `/image/<name>`** — files are referenced by path and shown on the device, not served over HTTP. A direct fetch returns 404 by design.
+
 ## Space budget — measured 2026-09-17 with a link map, and what we took back
 
 Method: `PLATFORMIO_BUILD_FLAGS="-Wl,-Map=/tmp/fw.map" pio run -e esp12e`, then sum the loadable sections (`.text`, `.rodata`, `.irom.text`, `.irom0.text`, `.data`) per object. **The earlier estimates in this file were wrong in two places** — the dashboard HTML is far bigger than assumed, and SD support costs 22 KB, not 6.
