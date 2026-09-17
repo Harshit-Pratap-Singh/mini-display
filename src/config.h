@@ -33,7 +33,10 @@
 
 // Update intervals
 #define SCROLL_INTERVAL 30
-#define DISPLAY_UPDATE_INTERVAL 1000
+// 500 ms, not 1 s, so the clock colon can blink on a half-second phase. Every page is
+// hash-gated in displayUpdate(), so the extra ticks only cost two small hash walks - a
+// page with nothing new returns without touching the panel.
+#define DISPLAY_UPDATE_INTERVAL 500
 
 // Filesystem
 #define IMAGE_DIR "/image/"

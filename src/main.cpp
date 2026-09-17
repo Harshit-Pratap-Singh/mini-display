@@ -24,7 +24,6 @@ String apPassword = "";  // Generated random AP password
 bool powerCycleCounterCleared = false;  // Track if power cycle counter has been reset
 bool recoveryBootMode = false;
 bool bootSuccessRecorded = false;
-bool clockSpriteWarmupDone = false;
 bool timeServicesStarted = false;
 bool mdnsStarted = false;
 bool otaStarted = false;
@@ -33,7 +32,6 @@ unsigned long lastOptionalServiceLogAt = 0;
 unsigned long lastTimeSyncAttempt = 0;
 
 constexpr uint32_t kBootSuccessConfirmMs = 30000UL;
-constexpr uint32_t kClockSpriteWarmupMs = 8000UL;
 constexpr uint32_t kDisplayProfileCheckMs = 15000UL;
 constexpr uint32_t kOptionalServiceWarmupMs = 1500UL;
 // Steady-state free heap on this board is ~21.4 KB, so the upstream 28 KB gate meant mDNS and
@@ -513,28 +511,9 @@ void maybeMarkBootSuccessful() {
     bootCounterReset();
     bootSuccessRecorded = true;
 
-    if (!recoveryBootMode && !wifiFailsafeMode && !clockSpriteWarmupDone) {
-        displaySetClockSpriteAllowed(true);
-        clockSpriteWarmupDone = true;
-    }
-
     logPrint(F("Boot stability confirmed"));
 
     logHeapState("stability window");
-}
-
-void maybeEnableClockSprite() {
-    if (clockSpriteWarmupDone || recoveryBootMode || wifiFailsafeMode || bootCompletedAt == 0) {
-        return;
-    }
-
-    if (millis() - bootCompletedAt < kClockSpriteWarmupMs) {
-        return;
-    }
-
-    displaySetClockSpriteAllowed(true);
-    clockSpriteWarmupDone = true;
-    logPrint(F("Clock sprite warmup complete"));
 }
 
 void setupFilesystem() {
@@ -685,7 +664,6 @@ void setup() {
 
     displayInit();
     logHeapState("display init");
-    displaySetClockSpriteAllowed(false);
     displaySetBrightness(appSettings.brightness);  // Prime saved brightness before dashboard profile loads
 
     displayShowMessage(F("SmartClock\nInitializing..."));
@@ -880,13 +858,15 @@ void loop() {
         displayCycleNextPage(true);
     }
 
-    maybeEnableClockSprite();
 
-    if (millis() - lastDisplayUpdate > DISPLAY_UPDATE_INTERVAL) {
+    if (millis() - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
         if (!displayState.showImage) {
             displayUpdate();
         }
-        lastDisplayUpdate = millis();
+        // Snap to the interval grid, not to "now": measuring from after the render folds
+        // the render time into the period, so the tick runs slower than the colon's blink
+        // phase and periodically samples the same parity twice, skipping a half-beat.
+        lastDisplayUpdate = (millis() / DISPLAY_UPDATE_INTERVAL) * DISPLAY_UPDATE_INTERVAL;
     }
 
     maybeMarkBootSuccessful();

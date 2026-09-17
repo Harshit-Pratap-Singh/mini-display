@@ -252,3 +252,57 @@ Object sizes from `xtensa-lx106-elf-size` on the esp12e build (pre-link; real sa
 | logger.cpp | 0.5 KB | 1.5 KB | Shrink ring buffer if RAM-bound. |
 
 Order of operations: (1) `-D BEARSSL_SSL_BASIC` build flag (one line, trims cipher suites); (2) delete markets/HA/quote/focus/world/event feature slices end-to-end (feed + page + route + dashboard section); (3) fonts; (4) WiFiManager replacement only if still needed. Measure and log heap after each step.
+
+## Milestone 3 — commit C: clock faces (2026-09-17, verified on hardware)
+
+Four selectable clock layouts, chosen with `clockFace` in `/dashboard-config.json` (Display → Clock in the dashboard). All four are drawn with TFT_eSPI primitives — no bitmaps, no sprite, no heap.
+
+| `clockFace` | Name | Layout |
+|---|---|---|
+| 0 | Cards | rounded time card over a rounded weather card (the default) |
+| 1 | Bold | full-bleed: badge strip, 48 px digits, 48 px temperature, rain + high/low chips |
+| 2 | Matrix | clock strip over bordered instrument tiles, seconds sweep bar, NTP/link tape, precip/humidity/pressure wells |
+| 3 | Radial | rain gauge arcing over the top, temperature-range gauge along the bottom with a position marker |
+
+### Cost — measured with a link map
+| Item | Bytes |
+|---|---|
+| all four static layouts | 4,068 |
+| all four per-second updaters | 1,046 |
+| shared helpers (bars, tiles, markers, time splitting, temperature cluster) | 906 |
+| `TFT_eSPI::drawArc`, pulled in only by the radial face | 1,374 |
+| **total added, including the web UI picker and humidity/pressure** | **~8.9 KB** |
+
+Build after the work: **704,827 B flash (67.5%)**, 52,752 B static RAM (64.4%), 339,637 B free. Heap cost is zero — every face draws straight to the panel.
+
+### Font facts that constrain every layout
+Taken from the TFT_eSPI font headers; these decide what can be drawn where.
+
+| Constant | Font | Height | Baseline | Notes |
+|---|---|---|---|---|
+| `FONT_INFO` | 1 GLCD | 8 | 7 | 6 px per char, full ASCII |
+| `FONT_LABEL` | 2 Font16 | 16 | 13 | full ASCII, `C`/`F` are 8 px |
+| `FONT_BODY` | 4 Font32rle | 26 | 19 | digit 14 |
+| `FONT_TITLE` | 6 Font64rle | 48 | 36 | digit 27 — **only `[space] 0-9 : . - a p m`** |
+| `FONT_HUGE` | 7 Font7srle | 48 | 47 | digit 32, `"88:88"` is 140 px — **only `[space] 0-9 : . -`** |
+
+- **No font has a degree glyph**, so `°` is drawn as a ring (`drawDegreeRing`) and the unit letter comes from `weatherUnitSymbol()`.
+- Baselines differ per font, so two sizes share a visual baseline only when `topY_a + baseline_a == topY_b + baseline_b`. `drawTemperatureCluster()` does this; matching box tops instead puts the unit letter visibly off the line.
+- Do **not** read baselines from TFT_eSPI's own `fontdata` table: it is defined in the header, so referencing it from `display.cpp` instantiates a second copy and drags glyph data in with it — **measured at +12.4 KB of flash**. `fontBaseline()` hardcodes the five values above instead.
+- `drawString` paints an **opaque box** whenever `textcolor != textbgcolor`, so a later draw erases an earlier one wherever the boxes intersect. Draw order matters as much as position.
+- `setTextPadding` fills to the **right** of a left datum, **both sides** of a centre datum, and to the **left** of a right datum — pick the datum facing the side whose width can change.
+
+### Repaint rules learned here
+`dashboardStaticHash()` changing forces a full redraw; `dashboardDynamicHash()` changing runs only `updateClockDynamicArea()`. Anything drawn in the static half that is **not** in the static hash goes stale until something unrelated forces a redraw. Three bugs of exactly this shape were fixed:
+- `hashWeatherData()` did not hash `humidity`, `pressure`, `sunriseMinutes`, `sunsetMinutes` — a poll moving only those left the tiles showing old values.
+- The sun/moon icon follows the **wall clock** crossing sunrise/sunset, not the weather data, so nothing changed at dusk. `hashClockTimeDerivedState()` now hashes `hasTimeSync()` plus the day/night and near-sun-event state.
+- The matrix face's `NTP OK` / `NO TIME` tape is static and `hasTimeSync()` was unhashed, so a device that booted before SNTP replied showed a red fault label next to a correct clock, forever.
+
+### Blinking colon
+`DISPLAY_UPDATE_INTERVAL` dropped from 1000 ms to **500 ms** so the colon can blink on a half-second phase. Every page is hash-gated, so the extra ticks cost two hash walks, not redraws. Two traps:
+- The phase is **latched once per tick** (`latchClockColonPhase()`), not read from `millis()` at each use — the hash and the draw happen a whole render apart, and a flip between them caches a parity the panel never showed.
+- `lastDisplayUpdate` snaps to the interval grid rather than to `millis()` after the render; measuring from "now" folds the render time into the period, so the tick drifts slower than the blink and periodically skips a half-beat.
+- Blank the colon with a `fillRect` of its own footprint, not by redrawing it in the background colour: TFT_eSPI skips the glyph background when `fg == bg`.
+
+### Weather feed additions
+`current=` now also requests `relative_humidity_2m,surface_pressure` (both filtered, both parsed to `-1` when absent — the `memset` before parsing would otherwise leave them reading as 0 %). `fillWeatherDataJson()` now emits `weatherCode`, `humidity`, `pressure`, `sunriseMinutes`, `sunsetMinutes`, so every parsed value is inspectable over HTTP. Bengaluru sample: humidity 74 %, pressure 911 hPa (surface, not sea-level adjusted — the city is ~920 m up).

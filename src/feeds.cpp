@@ -466,15 +466,37 @@ void buildWeatherSearchFilter(JsonDocument &filter) {
     item["timezone"] = true;
 }
 
+// Open-Meteo returns local ISO timestamps like "2026-09-17T06:12". We only need the
+// time of day, in minutes, to decide whether to draw day or night weather icons.
+int isoTimeToMinutes(const char *iso) {
+    if (iso == nullptr) {
+        return -1;
+    }
+    const char *timePart = strchr(iso, 'T');
+    if (timePart == nullptr || strlen(timePart) < 6) {
+        return -1;
+    }
+    int hours = ((timePart[1] - '0') * 10) + (timePart[2] - '0');
+    int minutes = ((timePart[4] - '0') * 10) + (timePart[5] - '0');
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        return -1;
+    }
+    return (hours * 60) + minutes;
+}
+
 void buildWeatherForecastFilter(JsonDocument &filter) {
     JsonObject current = filter["current"].to<JsonObject>();
     current["temperature_2m"] = true;
     current["weather_code"] = true;
+    current["relative_humidity_2m"] = true;
+    current["surface_pressure"] = true;
 
     JsonObject daily = filter["daily"].to<JsonObject>();
     daily["temperature_2m_max"] = true;
     daily["temperature_2m_min"] = true;
     daily["precipitation_probability_max"] = true;
+    daily["sunrise"] = true;
+    daily["sunset"] = true;
 }
 
 void buildCoinGeckoSearchFilter(JsonDocument &filter) {
@@ -741,6 +763,11 @@ void fillWeatherDataJson(JsonObject root, const WeatherData &weather) {
     root["high"] = weather.high;
     root["low"] = weather.low;
     root["rainChance"] = weather.rainChance;
+    root["weatherCode"] = weather.weatherCode;
+    root["humidity"] = weather.humidity;
+    root["pressure"] = weather.pressure;
+    root["sunriseMinutes"] = weather.sunriseMinutes;
+    root["sunsetMinutes"] = weather.sunsetMinutes;
 }
 
 void fillMarketDataJson(JsonObject root, const MarketData &market) {
@@ -1055,16 +1082,6 @@ bool httpGetJson(const String &url,
         return false;
     }
 
-    struct DisplayHeapGuard {
-        DisplayHeapGuard() {
-            displaySuspendDynamicResources();
-        }
-
-        ~DisplayHeapGuard() {
-            displayResumeDynamicResources();
-        }
-    } displayHeapGuard;
-
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap < kHttpsMinFreeHeapBytes) {
         if (error != nullptr) {
@@ -1338,8 +1355,8 @@ bool syncWeather(String *error) {
 
     String url = "http://api.open-meteo.com/v1/forecast?latitude=" + String(feedConfig.weather.latitude, 4) +
                  "&longitude=" + String(feedConfig.weather.longitude, 4) +
-                 "&current=temperature_2m,weather_code" +
-                 "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+                 "&current=temperature_2m,weather_code,relative_humidity_2m,surface_pressure" +
+                 "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset" +
                  "&forecast_days=1&timezone=auto";
     if (feedConfig.weather.useFahrenheit) {
         url += "&temperature_unit=fahrenheit";
@@ -1378,7 +1395,9 @@ bool syncWeather(String *error) {
     memset(&runtime.data, 0, sizeof(runtime.data));
     const char *locationLabel = feedConfig.weather.label[0] != '\0' ? feedConfig.weather.label : feedConfig.weather.query;
     copyString(runtime.data.location, sizeof(runtime.data.location), locationLabel);
-    copyString(runtime.data.condition, sizeof(runtime.data.condition), weatherCodeToText(current["weather_code"] | 0));
+    int weatherCode = current["weather_code"] | 0;
+    runtime.data.weatherCode = weatherCode;
+    copyString(runtime.data.condition, sizeof(runtime.data.condition), weatherCodeToText(weatherCode));
     runtime.data.temperature = static_cast<int>(roundf(current["temperature_2m"].as<float>()));
     runtime.data.high = highs.isNull() || highs.size() == 0
                             ? runtime.data.temperature
@@ -1389,6 +1408,23 @@ bool syncWeather(String *error) {
     runtime.data.rainChance = rain.isNull() || rain.size() == 0
                                   ? 0
                                   : constrain(static_cast<int>(roundf(rain[0].as<float>())), 0, 100);
+    // The memset above zeroed these, so an absent field must fall back to -1 ("unknown")
+    // rather than reading as 0 % humidity / 0 hPa on the matrix clock face.
+    runtime.data.humidity = current["relative_humidity_2m"].isNull()
+                                ? -1
+                                : constrain(static_cast<int>(roundf(current["relative_humidity_2m"].as<float>())), 0, 100);
+    runtime.data.pressure = current["surface_pressure"].isNull()
+                                ? -1
+                                : static_cast<int>(roundf(current["surface_pressure"].as<float>()));
+
+    JsonArrayConst sunriseTimes = daily["sunrise"];
+    JsonArrayConst sunsetTimes = daily["sunset"];
+    runtime.data.sunriseMinutes = sunriseTimes.isNull() || sunriseTimes.size() == 0
+                                      ? -1
+                                      : isoTimeToMinutes(sunriseTimes[0].as<const char *>());
+    runtime.data.sunsetMinutes = sunsetTimes.isNull() || sunsetTimes.size() == 0
+                                     ? -1
+                                     : isoTimeToMinutes(sunsetTimes[0].as<const char *>());
 
     runtime.hasData = true;
     runtime.syncing = false;

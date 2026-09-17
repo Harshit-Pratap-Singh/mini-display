@@ -1115,6 +1115,15 @@ input[type="submit"]:disabled,
                             <label for="rotationInterval">Rotation interval</label>
                             <input data-live type="number" id="rotationInterval" min="3" max="120">
                         </div>
+                        <div class="field">
+                            <label for="clockFace">Clock face</label>
+                            <select data-live id="clockFace">
+                                <option value="0">Cards - time card over a weather card</option>
+                                <option value="1">Bold - biggest digits, two chips</option>
+                                <option value="2">Matrix - instrument tiles</option>
+                                <option value="3">Radial - arc gauges around the time</option>
+                            </select>
+                        </div>
                     </div>
 
                     <div class="toggle-grid">
@@ -1122,6 +1131,31 @@ input[type="submit"]:disabled,
                         <label class="toggle"><span>Seconds</span><input data-live type="checkbox" id="showSeconds"></label>
                         <label class="toggle"><span>Header IP</span><input data-live type="checkbox" id="showIp"></label>
                         <label class="toggle"><span>Auto rotate</span><input data-live type="checkbox" id="rotationEnabled"></label>
+                    </div>
+
+                    <p class="display-section-copy" style="margin-top: 14px;">Clock face colours</p>
+                    <div class="color-grid">
+                        <div class="field color-card">
+                            <label for="clockHourHex">Hours</label>
+                            <div class="color-row">
+                                <input data-live type="color" id="clockHourPicker">
+                                <input data-live type="text" id="clockHourHex" placeholder="#8AB4F8" maxlength="7" spellcheck="false">
+                            </div>
+                        </div>
+                        <div class="field color-card">
+                            <label for="clockMinuteHex">Minutes</label>
+                            <div class="color-row">
+                                <input data-live type="color" id="clockMinutePicker">
+                                <input data-live type="text" id="clockMinuteHex" placeholder="#F9AB72" maxlength="7" spellcheck="false">
+                            </div>
+                        </div>
+                        <div class="field color-card">
+                            <label for="clockSecondHex">Seconds</label>
+                            <div class="color-row">
+                                <input data-live type="color" id="clockSecondPicker">
+                                <input data-live type="text" id="clockSecondHex" placeholder="#6FD3C7" maxlength="7" spellcheck="false">
+                            </div>
+                        </div>
                     </div>
                 </section>
 
@@ -2551,6 +2585,8 @@ function applyDashboardState(dashboardState) {
     updateThemeButtons("themePicker", "themePreset");
     setChecked("customThemeEnabled", config.customThemeEnabled);
 
+    applyClockColors(config.clockColors || {});
+
     const customTheme = config.customTheme || {};
     setThemeColorControl("accent", customTheme.accent || defaultCustomTheme.accent);
     setThemeColorControl("background", customTheme.background || defaultCustomTheme.background);
@@ -2580,6 +2616,7 @@ function applyDashboardState(dashboardState) {
     setChecked("use24Hour", config.use24Hour);
     setChecked("showSeconds", config.showSeconds);
     setChecked("showIp", config.showIp);
+    document.getElementById("clockFace").value = String(config.clockFace ?? 0);
     applyEnabledPages(config.pages || {});
 
     const focus = data.focus || {};
@@ -2848,8 +2885,37 @@ function buildConfigPayload() {
         rotationIntervalSec: readInt("rotationInterval", 10),
         use24Hour: document.getElementById("use24Hour").checked,
         showSeconds: document.getElementById("showSeconds").checked,
-        showIp: document.getElementById("showIp").checked
+        showIp: document.getElementById("showIp").checked,
+        clockFace: readInt("clockFace", 0),
+        clockColors: {
+            hour: readClockColor("clockHour", "#8AB4F8"),
+            minute: readClockColor("clockMinute", "#F9AB72"),
+            second: readClockColor("clockSecond", "#6FD3C7")
+        }
     };
+}
+
+const clockColorFields = [
+    { key: "hour", id: "clockHour", fallback: "#8AB4F8" },
+    { key: "minute", id: "clockMinute", fallback: "#F9AB72" },
+    { key: "second", id: "clockSecond", fallback: "#6FD3C7" }
+];
+
+function normalizeHex(value, fallback) {
+    const text = String(value ?? "").trim();
+    return /^#[0-9a-fA-F]{6}$/.test(text) ? text.toUpperCase() : fallback;
+}
+
+function readClockColor(id, fallback) {
+    return normalizeHex(document.getElementById(id + "Hex").value, fallback);
+}
+
+function applyClockColors(colors = {}) {
+    clockColorFields.forEach(({ key, id, fallback }) => {
+        const value = normalizeHex(colors[key], fallback);
+        document.getElementById(id + "Hex").value = value;
+        document.getElementById(id + "Picker").value = value;
+    });
 }
 
 function buildWidgetPayload() {
@@ -3715,6 +3781,20 @@ document.addEventListener("change", (event) => {
 
     if (event.target.id === "nightCustomThemeEnabled") {
         updateNightThemeUI();
+        scheduleLiveSync(90);
+        return;
+    }
+
+    const clockColorField = clockColorFields.find(
+        ({ id }) => event.target.id === id + "Picker" || event.target.id === id + "Hex"
+    );
+    if (clockColorField) {
+        const isPicker = event.target.id === clockColorField.id + "Picker";
+        const value = normalizeHex(event.target.value, clockColorField.fallback);
+        document.getElementById(clockColorField.id + (isPicker ? "Hex" : "Picker")).value = value;
+        if (!isPicker) {
+            event.target.value = value;
+        }
         scheduleLiveSync(90);
         return;
     }

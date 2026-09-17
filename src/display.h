@@ -27,9 +27,6 @@ struct DisplayState {
 void displayInit();
 void displaySetBrightness(int brightness);
 void displayApplyBrightness(int brightness);
-void displaySetClockSpriteAllowed(bool allowed);
-void displaySuspendDynamicResources();
-void displayResumeDynamicResources();
 void displayUpdate();
 void displayRenderClock();
 void displayRenderAPMode();

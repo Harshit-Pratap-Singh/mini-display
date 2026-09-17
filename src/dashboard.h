@@ -22,6 +22,15 @@ enum DashboardPageId : uint8_t {
     DASHBOARD_PAGE_COUNT
 };
 
+// Clock face layouts. Adding one means a new renderer + a new dynamic updater in display.cpp.
+enum DashboardClockFaceId : uint8_t {
+    DASHBOARD_CLOCK_FACE_CARDS = 0,  // rounded time card over a weather card
+    DASHBOARD_CLOCK_FACE_BOLD,       // full-bleed, biggest glanceable type
+    DASHBOARD_CLOCK_FACE_MATRIX,     // instrument panel: two zones of bordered tiles
+    DASHBOARD_CLOCK_FACE_RADIAL,     // perimeter arc gauges around centred digits
+    DASHBOARD_CLOCK_FACE_COUNT
+};
+
 enum DashboardThemeId : uint8_t {
     DASHBOARD_THEME_AURORA = 0,
     DASHBOARD_THEME_SUNSET,
@@ -36,6 +45,11 @@ struct WeatherData {
     int high;
     int low;
     int rainChance;
+    int weatherCode;      // WMO code from Open-Meteo; picks the weather icon. -1 = unknown.
+    int sunriseMinutes;   // local minutes past midnight, -1 if unknown
+    int sunsetMinutes;    // local minutes past midnight, -1 if unknown
+    int humidity;         // relative humidity %, -1 if unknown
+    int pressure;         // surface pressure hPa, -1 if unknown
 };
 
 struct MarketData {
@@ -103,6 +117,10 @@ struct DashboardConfig {
     bool use24Hour;
     bool showSeconds;
     bool showIp;
+    char clockHourColor[8];    // hex, e.g. "#8AB4F8" - hours on the clock face
+    char clockMinuteColor[8];  // minutes
+    char clockSecondColor[8];  // the small seconds
+    uint8_t clockFace;         // DashboardClockFaceId - which clock layout to draw
     bool enabledPages[DASHBOARD_PAGE_COUNT];
 };
 

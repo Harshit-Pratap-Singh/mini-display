@@ -17,7 +17,6 @@
 #define FONT_HUGE 7
 
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite clockDynamicSprite = TFT_eSprite(&tft);
 DisplayState displayState;
 int scrollPos = 240;
 
@@ -34,14 +33,39 @@ constexpr int kHeaderSubtitleY = 12;
 constexpr int kHeaderRuleY = 32;
 constexpr int kContentTopY = 40;
 constexpr int kClockDynamicRegionX = 12;
-constexpr int kClockDynamicRegionY = 44;
+constexpr int kClockDynamicRegionY = 40;
 constexpr int kClockDynamicRegionWidth = DISPLAY_WIDTH - (kClockDynamicRegionX * 2);
-constexpr int kClockDynamicRegionHeight = 64;
-constexpr int kClockTimeY = 54;
-constexpr int kClockMetaY = 118;
-constexpr int kClockFooterY = 148;
-constexpr int kClockFooterHeight = 78;
-constexpr uint32_t kClockSpriteMinFreeHeapBytes = 30000UL;
+constexpr int kClockDynamicRegionHeight = 66;
+constexpr int kClockTimeY = 40;
+constexpr int kClockMetaY = 102;
+// Seconds sit in a smaller face to the right of HH:MM at a FIXED x, so the big digits
+// keep their size and neither part shifts as the value changes (font 7 is monospace,
+// but 12-hour time still swaps between 1 and 2 hour digits).
+constexpr int kClockSecondsX = 182;
+constexpr int kClockSecondsGap = 8;
+constexpr int kClockCardY = 28;
+constexpr int kClockCardHeight = 104;
+constexpr int kClockFooterY = 140;
+constexpr int kClockFooterHeight = 92;
+// Bold face: full-bleed, no panels.
+constexpr int kBoldRuleY = 27;
+constexpr int kBoldTimeY = 34;
+constexpr int kBoldMetaY = 88;
+// Matrix face: a clock strip over a grid of instrument tiles.
+constexpr int kMatrixZoneHeight = 116;
+constexpr int kMatrixTimeY = 26;
+constexpr int kMatrixTimeRight = 150;
+constexpr int kMatrixSideX = 164;
+constexpr int kMatrixSecondsY = 58;
+constexpr int kMatrixSecondsBarY = 84;
+constexpr int kMatrixTapeY = 98;
+// Radial face: two perimeter gauges around centred digits.
+constexpr int kRadialCenter = 120;
+constexpr int kRadialOuterRadius = 116;
+constexpr int kRadialInnerRadius = 108;
+constexpr int kRadialTimeY = 102;
+constexpr int kRadialSideX = 198;
+constexpr int kRadialDateY = 158;
 constexpr uint8_t kPageTransitionFadeDownSteps = 2;
 constexpr uint8_t kPageTransitionFadeUpSteps = 3;
 constexpr uint16_t kPageTransitionFadeStepDelayMs = 12;
@@ -79,13 +103,13 @@ struct ThemeSelection {
 
 const ThemePalette kThemes[DASHBOARD_THEME_COUNT] = {
     {
-        rgb565(15, 18, 27),
-        rgb565(29, 35, 47),
-        rgb565(39, 46, 60),
-        rgb565(168, 199, 250),
-        rgb565(44, 66, 104),
-        rgb565(236, 241, 251),
-        rgb565(173, 182, 197),
+        rgb565(10, 14, 26),     // background - deep navy
+        rgb565(21, 27, 46),     // surface
+        rgb565(30, 38, 64),     // surfaceAlt
+        rgb565(111, 211, 199),  // accent - teal, matches the default seconds colour
+        rgb565(35, 75, 82),     // accentSoft
+        rgb565(237, 241, 250),  // text
+        rgb565(147, 160, 188),  // muted - brighter than upstream so small text reads
         rgb565(123, 214, 167),
         rgb565(255, 180, 171),
         rgb565(255, 210, 128),
@@ -143,11 +167,6 @@ struct ClockMetaCache {
 };
 
 ClockMetaCache clockMetaCache = {false, {0}};
-bool clockDynamicSpriteReady = false;
-bool clockDynamicSpriteAttempted = false;
-bool clockDynamicSpriteAllowed = false;
-bool resumeClockSpriteAfterDynamicSuspend = false;
-uint8_t dynamicResourceSuspendDepth = 0;
 
 struct TemporaryMessageState {
     bool active;
@@ -438,7 +457,7 @@ String formatLocalDate() {
     time_t now = time(nullptr);
     tm localTimeInfo;
     localtime_r(&now, &localTimeInfo);
-    strftime(buffer, sizeof(buffer), "%a %d %b %Y", &localTimeInfo);
+    strftime(buffer, sizeof(buffer), "%a %d %b", &localTimeInfo);  // weekday, no year
     return String(buffer);
 }
 
@@ -530,35 +549,164 @@ int chooseCanvasFittingFont(TCanvas &canvas,
     return fontCandidates[fontCandidateCount - 1];
 }
 
-template <typename TCanvas>
-void drawClockTime(TCanvas &canvas,
-                   const String &timeText,
-                   bool showSeconds,
-                   uint16_t primaryColor,
-                   uint16_t secondaryColor,
-                   uint16_t backgroundColor,
-                   int centerX,
-                   int topY) {
-    (void)secondaryColor;
-    const int timeFonts[] = {FONT_HUGE, FONT_TITLE, FONT_BODY};
-    int maxWidth = max(0, (centerX * 2) - (showSeconds ? 8 : 20));
-    int timeFont = chooseCanvasFittingFont(canvas,
-                                           timeText,
-                                           maxWidth,
-                                           timeFonts,
-                                           sizeof(timeFonts) / sizeof(timeFonts[0]));
+// Hour / minute / second each get their own colour, set as hex in the dashboard.
+struct ClockColors {
+    uint16_t hour;
+    uint16_t minute;
+    uint16_t second;
+};
 
-    canvas.setTextDatum(TL_DATUM);
-    canvas.setTextFont(FONT_HUGE);
-    int referenceHeight = canvas.fontHeight();
+uint16_t colorFromHex(const char *hex, uint16_t fallback) {
+    Rgb888 rgb;
+    if (!parseHexColor888(hex, rgb)) {
+        return fallback;
+    }
+    return rgb565(rgb.red, rgb.green, rgb.blue);
+}
 
-    canvas.setTextColor(primaryColor, backgroundColor);
-    canvas.setTextFont(timeFont);
-    int textWidth = canvas.textWidth(timeText, timeFont);
-    int textHeight = canvas.fontHeight();
-    int adjustedTopY = topY + max(0, (referenceHeight - textHeight) / 2);
-    int startX = centerX - (textWidth / 2);
-    canvas.drawString(timeText, startX, adjustedTopY, timeFont);
+ClockColors activeClockColors() {
+    const ThemePalette &theme = activeTheme();
+    ClockColors colors;
+    colors.hour = colorFromHex(dashboardConfig.clockHourColor, theme.text);
+    colors.minute = colorFromHex(dashboardConfig.clockMinuteColor, theme.text);
+    colors.second = colorFromHex(dashboardConfig.clockSecondColor, theme.accent);
+    return colors;
+}
+
+// Draws `text` so the draw overwrites its own previous pixels: the padded fill and the
+// glyphs go down in one call, so nothing blinks on the once-a-second redraws. Padding is
+// applied to the right of a left datum, both sides of a centre datum and to the left of a
+// right datum, so pick the datum that faces the digits that can change width.
+void drawPaddedText(const String &text,
+                    int x,
+                    int y,
+                    uint8_t datum,
+                    int font,
+                    int padWidth,
+                    uint16_t color,
+                    uint16_t background) {
+    tft.setTextDatum(datum);
+    tft.setTextFont(font);
+    tft.setTextColor(color, background);
+    tft.setTextPadding(padWidth);
+    tft.drawString(text, x, y, font);
+    tft.setTextPadding(0);
+}
+
+struct ClockParts {
+    String hours;
+    String minutes;
+    String seconds;  // empty when the clock is not showing seconds
+};
+
+// Splits "HH:MM" or "HH:MM:SS" as formatLocalTime() produced it.
+ClockParts splitClockText(const String &timeText) {
+    ClockParts parts;
+    String big = timeText;
+    int firstColon = timeText.indexOf(':');
+    int lastColon = timeText.lastIndexOf(':');
+    if (firstColon > 0 && lastColon > firstColon) {
+        big = timeText.substring(0, lastColon);
+        parts.seconds = timeText.substring(lastColon + 1);
+    }
+    parts.hours = firstColon > 0 ? big.substring(0, firstColon) : big;
+    parts.minutes = firstColon > 0 ? big.substring(firstColon + 1) : String();
+    return parts;
+}
+
+// Width of the widest HH:MM the big font can produce, so a face can centre the block
+// once and keep it still while the hours swap between one and two digits.
+int bigTimeWidth() {
+    return (tft.textWidth("88", FONT_HUGE) * 2) + tft.textWidth(":", FONT_HUGE);
+}
+
+// The colon blinks one display tick lit, one tick dark. The phase is latched once per
+// update rather than read from millis() at each use: dashboardDynamicHash() and the draw
+// inside drawBigTime() happen a whole render apart, and a flip in between would cache a
+// parity the panel never showed, leaving the colon half a beat out until the next change.
+bool clockColonLit = true;
+
+void latchClockColonPhase() {
+    clockColonLit = ((millis() / DISPLAY_UPDATE_INTERVAL) & 1UL) == 0UL;
+}
+
+bool clockColonVisible() {
+    return clockColonLit;
+}
+
+// Draws HH:MM in the configured hour and minute colours. `rightEdge` pins the right of the
+// minutes, and the hours are right-aligned against the colon with a two-digit-wide pad, so
+// a 12-hour clock dropping its leading digit erases the old one and shifts nothing.
+void drawBigTime(const ClockParts &parts, int rightEdge, int y, uint16_t background) {
+    const ThemePalette &theme = activeTheme();
+    ClockColors colors = activeClockColors();
+
+    bool hasMinutes = parts.minutes.length() > 0;
+    int minutesWidth = hasMinutes ? tft.textWidth(parts.minutes, FONT_HUGE) : 0;
+    int colonWidth = hasMinutes ? tft.textWidth(":", FONT_HUGE) : 0;
+    int minutesLeft = rightEdge - minutesWidth;
+    int colonLeft = minutesLeft - colonWidth;
+
+    drawPaddedText(parts.hours, colonLeft, y, TR_DATUM, FONT_HUGE,
+                   tft.textWidth("88", FONT_HUGE) + 6, colors.hour, background);
+    if (hasMinutes) {
+        if (clockColonVisible()) {
+            drawPaddedText(":", colonLeft, y, TL_DATUM, FONT_HUGE, 0, theme.muted, background);
+        } else {
+            // Blank the colon by its own footprint. Redrawing it in the background colour
+            // would not work: TFT_eSPI skips the glyph background whenever fg == bg.
+            tft.setTextFont(FONT_HUGE);
+            tft.fillRect(colonLeft, y, colonWidth, tft.fontHeight(), background);
+        }
+        drawPaddedText(parts.minutes, minutesLeft, y, TL_DATUM, FONT_HUGE, 0, colors.minute, background);
+    }
+}
+
+// Square-cornered panel: the instrument-panel look the matrix and bold faces use, as
+// opposed to drawRoundedPanel() which the card faces use.
+void drawTile(int x, int y, int width, int height, uint16_t fillColor, uint16_t borderColor) {
+    tft.fillRect(x, y, width, height, fillColor);
+    tft.drawRect(x, y, width, height, borderColor);
+}
+
+// Chunky segmented level bar. `segments` blocks, the first `percent` of them lit.
+void drawSegmentBar(int x, int y, int width, int height, int percent, int segments,
+                    uint16_t onColor, uint16_t offColor) {
+    if (segments < 1) {
+        return;
+    }
+    int gap = 2;
+    int segmentWidth = (width - (gap * (segments - 1))) / segments;
+    if (segmentWidth < 1) {
+        return;
+    }
+    int bounded = constrain(percent, 0, 100);
+    int lit = (bounded * segments + 99) / 100;  // any non-zero value lights at least one
+    for (int index = 0; index < segments; ++index) {
+        tft.fillRect(x + (index * (segmentWidth + gap)), y, segmentWidth, height,
+                     index < lit ? onColor : offColor);
+    }
+}
+
+// Solid progress bar, used for the seconds sweep on the matrix face.
+void drawLevelBar(int x, int y, int width, int height, int percent,
+                  uint16_t onColor, uint16_t offColor) {
+    int filled = (constrain(percent, 0, 100) * width) / 100;
+    tft.fillRect(x, y, width, height, offColor);
+    if (filled > 0) {
+        tft.fillRect(x, y, filled, height, onColor);
+    }
+}
+
+// A small triangle marker: up for a high/sunrise, down for a low/sunset.
+void drawTriangleMarker(int centerX, int centerY, int size, bool pointsUp, uint16_t color) {
+    if (pointsUp) {
+        tft.fillTriangle(centerX, centerY - size, centerX - size, centerY + size,
+                         centerX + size, centerY + size, color);
+    } else {
+        tft.fillTriangle(centerX, centerY + size, centerX - size, centerY - size,
+                         centerX + size, centerY - size, color);
+    }
 }
 
 String headerSubtitle() {
@@ -708,6 +856,30 @@ void drawAdaptiveBadge(int x,
     tft.drawString(label, x + (width / 2), y + (height / 2), font);
 }
 
+// Clips `text` to `maxWidth`, ending it with ".." so the cut is visible. The smallest
+// font candidate is often still too wide for a long city name, and drawString() neither
+// clips nor wraps - it just paints over whatever is next to it.
+String fitTextToWidth(const String &text, int font, int maxWidth) {
+    if (maxWidth <= 0 || tft.textWidth(text, font) <= maxWidth) {
+        return text;
+    }
+    String trimmed = text;
+    while (trimmed.length() > 1 && tft.textWidth(trimmed + "..", font) > maxWidth) {
+        trimmed.remove(trimmed.length() - 1);
+    }
+    // textWidth() counts bytes but drawString() decodes UTF-8, so a cut inside a multi-byte
+    // sequence leaves a lead byte that swallows the first marker dot as a continuation byte.
+    while (trimmed.length() > 0 &&
+           (static_cast<uint8_t>(trimmed[trimmed.length() - 1]) & 0xC0) == 0x80) {
+        trimmed.remove(trimmed.length() - 1);
+    }
+    if (trimmed.length() > 0 && (static_cast<uint8_t>(trimmed[trimmed.length() - 1]) & 0x80) != 0) {
+        trimmed.remove(trimmed.length() - 1);
+    }
+    // Room for one character and the marker, or nothing sensible fits at all.
+    return tft.textWidth(trimmed + "..", font) <= maxWidth ? trimmed + ".." : String();
+}
+
 void drawAdaptiveText(const String &text,
                       int x,
                       int y,
@@ -721,7 +893,7 @@ void drawAdaptiveText(const String &text,
     tft.setTextDatum(datum);
     tft.setTextFont(font);
     tft.setTextColor(textColor, backgroundColor);
-    tft.drawString(text, x, y, font);
+    tft.drawString(fitTextToWidth(text, font, maxWidth), x, y, font);
 }
 
 void drawDividerLine(int x, int y, int width, uint16_t color) {
@@ -754,6 +926,171 @@ void drawMetricColumn(int centerX,
                      sizeof(valueFonts) / sizeof(valueFonts[0]),
                      valueColor,
                      backgroundColor);
+}
+
+// The built-in fonts stop at ASCII 127, so there is no degree glyph to print.
+// Draw it: a small ring, sized to the font it sits next to.
+void drawDegreeRing(int x, int y, int radius, uint16_t color, uint16_t background) {
+    tft.fillCircle(x, y, radius, color);
+    tft.fillCircle(x, y, radius - (radius > 3 ? 2 : 1), background);
+}
+
+// --- Weather icons -------------------------------------------------------------
+// Drawn with primitives instead of PROGMEM bitmaps: a few hundred bytes of code
+// instead of a bitmap per condition, and they follow the theme colours for free.
+enum WeatherGlyph : uint8_t {
+    WEATHER_GLYPH_SUN = 0,
+    WEATHER_GLYPH_MOON,
+    WEATHER_GLYPH_PARTLY,
+    WEATHER_GLYPH_PARTLY_NIGHT,
+    WEATHER_GLYPH_SUNRISE,
+    WEATHER_GLYPH_CLOUD,
+    WEATHER_GLYPH_FOG,
+    WEATHER_GLYPH_RAIN,
+    WEATHER_GLYPH_SNOW,
+    WEATHER_GLYPH_STORM,
+    WEATHER_GLYPH_UNKNOWN
+};
+
+// WMO 4677 code groups, as Open-Meteo reports them.
+WeatherGlyph weatherGlyphForCode(int code, bool isNight) {
+    if (code < 0) {
+        return WEATHER_GLYPH_UNKNOWN;
+    }
+    if (code == 0) {
+        return isNight ? WEATHER_GLYPH_MOON : WEATHER_GLYPH_SUN;
+    }
+    if (code == 1 || code == 2) {
+        return isNight ? WEATHER_GLYPH_PARTLY_NIGHT : WEATHER_GLYPH_PARTLY;
+    }
+    if (code == 3) {
+        return WEATHER_GLYPH_CLOUD;
+    }
+    if (code == 45 || code == 48) {
+        return WEATHER_GLYPH_FOG;
+    }
+    if (code >= 95) {
+        return WEATHER_GLYPH_STORM;
+    }
+    if ((code >= 71 && code <= 77) || code == 85 || code == 86) {
+        return WEATHER_GLYPH_SNOW;
+    }
+    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
+        return WEATHER_GLYPH_RAIN;
+    }
+    return WEATHER_GLYPH_CLOUD;
+}
+
+// A puffy cloud centred on (cx, cy), `width` wide.
+void drawCloudShape(int cx, int cy, int width, uint16_t fill) {
+    int r = width / 4;
+    tft.fillCircle(cx - r, cy, r, fill);
+    tft.fillCircle(cx + r, cy, r * 3 / 4, fill);
+    tft.fillCircle(cx, cy - r * 2 / 3, r, fill);
+    tft.fillRoundRect(cx - width / 2, cy - r / 2, width, r + r / 2, r / 2, fill);
+}
+
+// Crescent: a filled disc with a second disc punched out of it in the background colour.
+void drawMoonShape(int cx, int cy, int radius, uint16_t fill, uint16_t background) {
+    tft.fillCircle(cx, cy, radius, fill);
+    tft.fillCircle(cx + radius / 2, cy - radius / 3, radius, background);
+}
+
+// Sun sitting on the horizon with rays above it: used around sunrise and sunset.
+void drawSunriseShape(int cx, int cy, int radius, uint16_t fill, uint16_t accent, uint16_t background) {
+    tft.fillCircle(cx, cy, radius, fill);
+    // Cut the disc off at the horizon with whatever is actually behind this icon - the
+    // faces sit on different panels, so this cannot assume one surface colour.
+    tft.fillRect(cx - radius - 6, cy + 1, (radius + 6) * 2, radius + 2, background);
+    tft.drawFastHLine(cx - radius - 8, cy + 1, (radius + 8) * 2, accent);
+    for (int i = -1; i <= 1; ++i) {
+        int x = cx + (i * (radius + 5));
+        tft.drawLine(x, cy - radius - 4, x, cy - radius - 9, accent);
+    }
+}
+
+void drawSunShape(int cx, int cy, int radius, uint16_t fill) {
+    tft.fillCircle(cx, cy, radius, fill);
+    for (int i = 0; i < 8; ++i) {
+        float angle = static_cast<float>(i) * (PI / 4.0f);
+        int inner = radius + 3;
+        int outer = radius + 7;
+        tft.drawLine(cx + static_cast<int>(cosf(angle) * inner),
+                     cy + static_cast<int>(sinf(angle) * inner),
+                     cx + static_cast<int>(cosf(angle) * outer),
+                     cy + static_cast<int>(sinf(angle) * outer),
+                     fill);
+    }
+}
+
+// `size` is the box the glyph is drawn inside, centred on (cx, cy).
+void drawWeatherIcon(int cx, int cy, int size, int code, uint16_t primary, uint16_t accent,
+                     uint16_t background, bool isNight, bool nearSunEvent) {
+    WeatherGlyph glyph = nearSunEvent && (code <= 3) ? WEATHER_GLYPH_SUNRISE
+                                                     : weatherGlyphForCode(code, isNight);
+    int cloudWidth = size * 4 / 5;
+
+    switch (glyph) {
+        case WEATHER_GLYPH_SUN:
+            drawSunShape(cx, cy, size / 4, accent);
+            break;
+        case WEATHER_GLYPH_MOON:
+            drawMoonShape(cx, cy, size / 4, accent, background);
+            break;
+        case WEATHER_GLYPH_SUNRISE:
+            drawSunriseShape(cx, cy, size / 5, accent, primary, background);
+            break;
+        case WEATHER_GLYPH_PARTLY_NIGHT:
+            drawMoonShape(cx + size / 5, cy - size / 5, size / 6, accent, background);
+            drawCloudShape(cx - size / 10, cy + size / 8, cloudWidth, primary);
+            break;
+        case WEATHER_GLYPH_PARTLY:
+            drawSunShape(cx + size / 5, cy - size / 5, size / 6, accent);
+            drawCloudShape(cx - size / 10, cy + size / 8, cloudWidth, primary);
+            break;
+        case WEATHER_GLYPH_CLOUD:
+            drawCloudShape(cx, cy, cloudWidth, primary);
+            break;
+        case WEATHER_GLYPH_FOG:
+            drawCloudShape(cx, cy - size / 6, cloudWidth, primary);
+            for (int i = 0; i < 3; ++i) {
+                int y = cy + size / 5 + (i * 5);
+                int inset = (i % 2) * 6;
+                tft.drawFastHLine(cx - cloudWidth / 2 + inset, y, cloudWidth - (inset * 2), accent);
+            }
+            break;
+        case WEATHER_GLYPH_RAIN:
+            drawCloudShape(cx, cy - size / 6, cloudWidth, primary);
+            for (int i = -1; i <= 1; ++i) {
+                int x = cx + (i * size / 5);
+                int y = cy + size / 5;
+                tft.drawLine(x + 2, y, x - 2, y + 8, accent);
+            }
+            break;
+        case WEATHER_GLYPH_SNOW:
+            drawCloudShape(cx, cy - size / 6, cloudWidth, primary);
+            for (int i = -1; i <= 1; ++i) {
+                int x = cx + (i * size / 5);
+                int y = cy + size / 4;
+                tft.drawFastHLine(x - 3, y, 7, accent);
+                tft.drawFastVLine(x, y - 3, 7, accent);
+            }
+            break;
+        case WEATHER_GLYPH_STORM:
+            drawCloudShape(cx, cy - size / 6, cloudWidth, primary);
+            {
+                int x = cx;
+                int y = cy + size / 8;
+                tft.fillTriangle(x + 4, y, x - 5, y + 11, x + 1, y + 11, accent);
+                tft.fillTriangle(x - 1, y + 9, x + 5, y + 9, x - 3, y + 20, accent);
+            }
+            break;
+        case WEATHER_GLYPH_UNKNOWN:
+        default:
+            tft.drawCircle(cx, cy, size / 4, primary);
+            tft.drawCircle(cx, cy, size / 4 - 1, primary);
+            break;
+    }
 }
 
 void drawScreenChrome(const String &title) {
@@ -819,6 +1156,45 @@ char weatherUnitSymbol() {
 
 String formatWeatherTemperature(int value) {
     return String(value) + weatherUnitSymbol();
+}
+
+// Distance from the top of a built-in font's box down to its ink baseline, taken from the
+// TFT_eSPI font headers. Hardcoded rather than read from the library's own fontdata table:
+// that table is defined in the header, so referencing it from this file instantiates a
+// second copy and drags the glyph tables in with it (measured at +12.4 KB of flash).
+int fontBaseline(int font) {
+    switch (font) {
+        case FONT_LABEL: return 13;  // Font16,    16 px tall
+        case FONT_BODY:  return 19;  // Font32rle, 26 px tall
+        case FONT_TITLE: return 36;  // Font64rle, 48 px tall
+        case FONT_HUGE:  return 47;  // Font7srle, 48 px tall
+        default:         return 7;   // GLCD,       8 px tall
+    }
+}
+
+int temperatureClusterWidth(int value, int numberFont, int unitFont, int ringRadius) {
+    return tft.textWidth(String(value), numberFont) + (ringRadius * 2) + 4 +
+           tft.textWidth(String(weatherUnitSymbol()), unitFont);
+}
+
+// Draws "25" then a degree ring then "C", left-anchored at leftX. The ring is drawn rather
+// than printed because the built-in fonts stop at ASCII 127, and the letter follows the
+// feed's unit setting so a Fahrenheit device reads "77F".
+void drawTemperatureCluster(int value, int leftX, int topY, int numberFont, int unitFont,
+                            int ringRadius, uint16_t numberColor, uint16_t unitColor,
+                            uint16_t background) {
+    String number = String(value);
+    String unit = String(weatherUnitSymbol());
+    drawPaddedText(number, leftX, topY, TL_DATUM, numberFont, 0, numberColor, background);
+    int ringX = leftX + tft.textWidth(number, numberFont) + ringRadius + 2;
+    drawDegreeRing(ringX, topY + ringRadius + 2, ringRadius, unitColor, background);
+    // Sit the unit letter on the number's own baseline. A TL_DATUM draw positions text by
+    // the top of its box, and the built-in fonts leave different amounts of descender room
+    // below the baseline (font 2: 16 tall / 13 baseline, font 4: 26/19, font 6: 48/36,
+    // font 7: 48/47), so matching box tops puts the letter visibly off the line.
+    int unitTop = topY + fontBaseline(numberFont) - fontBaseline(unitFont);
+    drawPaddedText(unit, ringX + ringRadius + 2, unitTop, TL_DATUM, unitFont, 0,
+                   unitColor, background);
 }
 
 const MarketData* effectiveMarketData(uint8_t index) {
@@ -1116,6 +1492,47 @@ uint8_t nextAvailableDashboardPage(uint8_t currentPage) {
     return dashboardFirstEnabledPage();
 }
 
+// True when the local clock is outside sunrise..sunset, so icons switch to moon variants.
+bool weatherIsNight(const WeatherData *weather, int nowMinutes) {
+    if (weather == nullptr || nowMinutes < 0 ||
+        weather->sunriseMinutes < 0 || weather->sunsetMinutes < 0) {
+        return false;
+    }
+    return nowMinutes < weather->sunriseMinutes || nowMinutes >= weather->sunsetMinutes;
+}
+
+int localMinutesOfDay() {
+    if (!hasTimeSync()) {
+        return -1;
+    }
+    time_t now = time(nullptr);
+    tm local;
+    localtime_r(&now, &local);
+    return (local.tm_hour * 60) + local.tm_min;
+}
+
+// Day/night state every face needs before it can pick an icon.
+struct WeatherContext {
+    bool isNight;
+    bool nearSunEvent;
+    int nextSunEventMinutes;  // -1 when sunrise/sunset are unknown
+};
+
+WeatherContext weatherContextFor(const WeatherData *weather) {
+    WeatherContext context = {false, false, -1};
+    if (weather == nullptr) {
+        return context;
+    }
+    int nowMinutes = localMinutesOfDay();
+    context.isNight = weatherIsNight(weather, nowMinutes);
+    context.nearSunEvent = nowMinutes >= 0 && weather->sunriseMinutes >= 0 &&
+                           (abs(nowMinutes - weather->sunriseMinutes) <= 30 ||
+                            (weather->sunsetMinutes >= 0 &&
+                             abs(nowMinutes - weather->sunsetMinutes) <= 30));
+    context.nextSunEventMinutes = context.isNight ? weather->sunriseMinutes : weather->sunsetMinutes;
+    return context;
+}
+
 void hashWeatherData(uint32_t &hash) {
     hashValue(hash, feedsWeatherSource());
     hashValue(hash, feedsWeatherUsesFahrenheit());
@@ -1134,6 +1551,23 @@ void hashWeatherData(uint32_t &hash) {
     hashValue(hash, weather->high);
     hashValue(hash, weather->low);
     hashValue(hash, weather->rainChance);
+    hashValue(hash, weather->weatherCode);
+    hashValue(hash, weather->humidity);
+    hashValue(hash, weather->pressure);
+    hashValue(hash, weather->sunriseMinutes);
+    hashValue(hash, weather->sunsetMinutes);
+}
+
+// The clock page draws two things in its static half that follow the wall clock rather
+// than config or weather: the matrix face's NTP tape, and the sun/moon icon that flips
+// when the current time crosses sunrise or sunset. Without these the static half never
+// repaints them - the tape stays red all day and the icon never becomes a moon.
+void hashClockTimeDerivedState(uint32_t &hash) {
+    hashValue(hash, hasTimeSync());
+    WeatherContext context = weatherContextFor(effectiveWeatherData());
+    hashValue(hash, context.isNight);
+    hashValue(hash, context.nearSunEvent);
+    hashValue(hash, context.nextSunEventMinutes);
 }
 
 void hashMarketData(uint32_t &hash) {
@@ -1210,6 +1644,12 @@ uint32_t dashboardStaticHash(uint8_t pageId) {
         case DASHBOARD_PAGE_CLOCK:
             hashValue(hash, dashboardConfig.use24Hour);
             hashValue(hash, dashboardConfig.showSeconds);
+            // A different face or a new colour is a whole new layout, so force a full redraw.
+            hashValue(hash, dashboardConfig.clockFace);
+            hashCString(hash, dashboardConfig.clockHourColor);
+            hashCString(hash, dashboardConfig.clockMinuteColor);
+            hashCString(hash, dashboardConfig.clockSecondColor);
+            hashClockTimeDerivedState(hash);
             hashValue(hash, hasWeatherContent());
             hashValue(hash, weatherWaitingForSync());
             hashValue(hash, activeClockMessage() != nullptr);
@@ -1269,6 +1709,7 @@ uint32_t dashboardDynamicHash(uint8_t pageId) {
             hashCString(hash, timeText.c_str());
             hashCString(hash, metaLine.c_str());
             hashValue(hash, isPm);
+            hashValue(hash, clockColonVisible());  // drives the 1 Hz colon blink
             break;
         }
         case DASHBOARD_PAGE_FOCUS: {
@@ -1328,91 +1769,129 @@ bool pageUsesDynamicRefresh(uint8_t pageId) {
            pageId == DASHBOARD_PAGE_EVENT;
 }
 
-bool ensureClockDynamicSprite() {
-    if (!clockDynamicSpriteAllowed) {
-        return false;
-    }
+// --- per-face dynamic halves -------------------------------------------------
+// Each one redraws only what changes on the second tick. Every draw is padded, so
+// nothing is cleared first and nothing blinks.
 
-    if (clockDynamicSpriteReady) {
-        return true;
-    }
-
-    if (clockDynamicSpriteAttempted) {
-        return false;
-    }
-
-    clockDynamicSpriteAttempted = true;
-    uint32_t freeHeap = ESP.getFreeHeap();
-    if (freeHeap < kClockSpriteMinFreeHeapBytes) {
-        logPrintf("Clock sprite skipped, free heap too low: %u", freeHeap);
-        return false;
-    }
-
-    clockDynamicSprite.deleteSprite();
-    clockDynamicSprite.setColorDepth(4);
-    clockDynamicSpriteReady =
-        clockDynamicSprite.createSprite(kClockDynamicRegionWidth, kClockDynamicRegionHeight) != nullptr;
-
-    if (clockDynamicSpriteReady) {
-        logPrintf("Clock sprite ready (%dx%d), free heap now %u",
-                  kClockDynamicRegionWidth,
-                  kClockDynamicRegionHeight,
-                  ESP.getFreeHeap());
-    } else {
-        logPrintf("Clock sprite allocation failed, free heap was %u", freeHeap);
-    }
-
-    return clockDynamicSpriteReady;
-}
-
-void updateClockDynamicArea() {
+void updateCardsDynamicArea() {
     const ThemePalette &theme = activeTheme();
     bool isPm = false;
     String timeText = formatLocalTime(dashboardConfig.showSeconds, dashboardConfig.use24Hour, &isPm);
-    String metaLine = formatClockMetaLine(isPm);
-    uint16_t dynamicBackground = theme.surface;
-    int localTimeTopY = kClockTimeY - kClockDynamicRegionY;
+    ClockParts parts = splitClockText(timeText);
 
-    if (ensureClockDynamicSprite()) {
-        clockDynamicSprite.fillSprite(dynamicBackground);
-        drawClockTime(clockDynamicSprite,
-                      timeText,
-                      dashboardConfig.showSeconds,
-                      theme.text,
-                      theme.muted,
-                      dynamicBackground,
-                      kClockDynamicRegionWidth / 2,
-                      localTimeTopY);
-        clockDynamicSprite.pushSprite(kClockDynamicRegionX, kClockDynamicRegionY);
-    } else {
-        tft.fillRect(kClockDynamicRegionX,
-                     kClockDynamicRegionY,
-                     kClockDynamicRegionWidth,
-                     kClockDynamicRegionHeight,
-                     dynamicBackground);
-        drawClockTime(tft,
-                      timeText,
-                      dashboardConfig.showSeconds,
-                      theme.text,
-                      theme.muted,
-                      dynamicBackground,
-                      120,
-                      kClockTimeY);
+    // With seconds beside it the block is pinned left of them; without, it is centred.
+    int rightEdge = parts.seconds.length() > 0 ? kClockSecondsX - kClockSecondsGap
+                                               : (DISPLAY_WIDTH + bigTimeWidth()) / 2;
+    drawBigTime(parts, rightEdge, kClockTimeY, theme.surface);
+
+    if (parts.seconds.length() > 0) {
+        tft.setTextFont(FONT_HUGE);
+        int bigHeight = tft.fontHeight();
+        tft.setTextFont(FONT_BODY);
+        int smallHeight = tft.fontHeight();
+        drawPaddedText(parts.seconds, kClockSecondsX, kClockTimeY + bigHeight - smallHeight,
+                       TL_DATUM, FONT_BODY,
+                       kClockDynamicRegionX + kClockDynamicRegionWidth - kClockSecondsX,
+                       activeClockColors().second, theme.surface);
     }
 
+    String metaLine = formatClockMetaLine(isPm);
     if (!clockMetaCache.valid || strcmp(clockMetaCache.metaLine, metaLine.c_str()) != 0) {
-        tft.setTextFont(FONT_BODY);
-        int metaWidth = tft.textWidth(metaLine) + 12;
-        if (clockMetaCache.valid) {
-            metaWidth = max(metaWidth, tft.textWidth(clockMetaCache.metaLine) + 12);
-        }
-
-        tft.setTextDatum(TC_DATUM);
-        tft.setTextColor(theme.muted, dynamicBackground);
-        tft.setTextPadding(metaWidth);
-        tft.drawString(metaLine, 120, kClockMetaY, FONT_BODY);
-        tft.setTextPadding(0);
+        drawPaddedText(metaLine, DISPLAY_WIDTH / 2, kClockMetaY, TC_DATUM, FONT_BODY,
+                       kClockDynamicRegionWidth, theme.muted, theme.surface);
         updateClockMetaCache(metaLine);
+    }
+}
+
+void updateBoldDynamicArea() {
+    const ThemePalette &theme = activeTheme();
+    bool isPm = false;
+    String timeText = formatLocalTime(dashboardConfig.showSeconds, dashboardConfig.use24Hour, &isPm);
+    ClockParts parts = splitClockText(timeText);
+
+    drawBigTime(parts, (DISPLAY_WIDTH + bigTimeWidth()) / 2, kBoldTimeY, theme.background);
+
+    // Meta row under the digits: date on the left, seconds on the right.
+    if (parts.seconds.length() > 0) {
+        drawPaddedText(":" + parts.seconds, 230, kBoldMetaY, TR_DATUM, FONT_LABEL, 58,
+                       activeClockColors().second, theme.background);
+    }
+
+    String metaLine = formatClockMetaLine(isPm);
+    if (!clockMetaCache.valid || strcmp(clockMetaCache.metaLine, metaLine.c_str()) != 0) {
+        drawPaddedText(metaLine, 10, kBoldMetaY, TL_DATUM, FONT_LABEL, 150,
+                       theme.muted, theme.background);
+        updateClockMetaCache(metaLine);
+    }
+}
+
+void updateMatrixDynamicArea() {
+    const ThemePalette &theme = activeTheme();
+    bool isPm = false;
+    String timeText = formatLocalTime(dashboardConfig.showSeconds, dashboardConfig.use24Hour, &isPm);
+    ClockParts parts = splitClockText(timeText);
+
+    drawBigTime(parts, kMatrixTimeRight, kMatrixTimeY, theme.surface);
+
+    drawPaddedText(dashboardConfig.use24Hour ? "24H" : (isPm ? "PM" : "AM"),
+                   kMatrixSideX, 30, TL_DATUM, FONT_LABEL, 44, theme.warning, theme.surface);
+
+    if (parts.seconds.length() > 0) {
+        drawPaddedText(parts.seconds, kMatrixSideX + 26, kMatrixSecondsY, TL_DATUM, FONT_LABEL,
+                       36, activeClockColors().second, theme.surface);
+        // Sweep bar: the minute filling up, so the strip reads as an instrument.
+        drawLevelBar(kMatrixSideX, kMatrixSecondsBarY, 62, 3,
+                     (parts.seconds.toInt() * 100) / 59,
+                     activeClockColors().second, theme.surfaceAlt);
+    }
+
+    String metaLine = formatClockMetaLine(isPm);
+    if (!clockMetaCache.valid || strcmp(clockMetaCache.metaLine, metaLine.c_str()) != 0) {
+        drawPaddedText(metaLine, DISPLAY_WIDTH / 2, kMatrixTapeY, TC_DATUM, FONT_INFO, 118,
+                       theme.muted, theme.surface);
+        updateClockMetaCache(metaLine);
+    }
+}
+
+void updateRadialDynamicArea() {
+    const ThemePalette &theme = activeTheme();
+    bool isPm = false;
+    String timeText = formatLocalTime(dashboardConfig.showSeconds, dashboardConfig.use24Hour, &isPm);
+    ClockParts parts = splitClockText(timeText);
+
+    drawBigTime(parts, (DISPLAY_WIDTH + bigTimeWidth()) / 2, kRadialTimeY, theme.background);
+
+    // The flanks between the two arcs are free, so the seconds live out there.
+    if (parts.seconds.length() > 0) {
+        drawPaddedText(parts.seconds, kRadialSideX, kRadialTimeY + 10, TL_DATUM, FONT_LABEL, 34,
+                       activeClockColors().second, theme.background);
+    }
+    drawPaddedText(dashboardConfig.use24Hour ? "" : (isPm ? "PM" : "AM"),
+                   kRadialSideX, kRadialTimeY + 32, TL_DATUM, FONT_INFO, 22,
+                   theme.muted, theme.background);
+
+    String dateLine = formatLocalDate();
+    if (!clockMetaCache.valid || strcmp(clockMetaCache.metaLine, dateLine.c_str()) != 0) {
+        drawPaddedText(dateLine, DISPLAY_WIDTH / 2, kRadialDateY, TC_DATUM, FONT_LABEL, 150,
+                       theme.muted, theme.background);
+        updateClockMetaCache(dateLine);
+    }
+}
+
+void updateClockDynamicArea() {
+    switch (dashboardConfig.clockFace) {
+        case DASHBOARD_CLOCK_FACE_BOLD:
+            updateBoldDynamicArea();
+            break;
+        case DASHBOARD_CLOCK_FACE_MATRIX:
+            updateMatrixDynamicArea();
+            break;
+        case DASHBOARD_CLOCK_FACE_RADIAL:
+            updateRadialDynamicArea();
+            break;
+        default:
+            updateCardsDynamicArea();
+            break;
     }
 }
 
@@ -1475,73 +1954,407 @@ void updateEventDynamicArea() {
     tft.drawString(formatRelativeCountdown(dashboardEventRemainingSeconds()), 120, 100, FONT_HUGE);
 }
 
-void renderClockPage() {
+// Slim header for the card face: an accent dot and the IP, no "Clock" title bar - you can
+// see that it is a clock - which buys the time roughly 14 px of height.
+void drawClockHeader() {
     const ThemePalette &theme = activeTheme();
-    const int compactFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
-    const int footerConditionFonts[] = {FONT_LABEL, FONT_INFO};
-    const int footerTemperatureFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
-    drawScreenChrome("Clock");
-    drawRoundedPanel(8, 40, 224, 106, theme.surface, theme.surfaceAlt);
-    clockMetaCache.valid = false;
-    updateClockDynamicArea();
+    tft.fillScreen(theme.background);
+    tft.fillCircle(16, 17, 4, theme.accent);
 
-    const char *clockMessage = activeClockMessage();
-    bool showBottomPanel = hasWeatherContent() || weatherWaitingForSync() || clockMessage != nullptr;
-    if (!showBottomPanel) {
+    String subtitle = headerSubtitle();
+    if (!subtitle.isEmpty()) {
+        tft.setTextDatum(TR_DATUM);
+        tft.setTextFont(FONT_INFO);
+        tft.setTextColor(theme.muted, theme.background);
+        tft.drawString(subtitle, DISPLAY_WIDTH - 12, 11, FONT_INFO);
+    }
+}
+
+// Whatever a face should show in place of the weather block when there is none yet.
+// Returns false when there is nothing to say at all.
+bool drawClockFallbackMessage(int centerX, int topY, int maxWidth, int font,
+                              uint16_t background) {
+    const ThemePalette &theme = activeTheme();
+    if (weatherWaitingForSync()) {
+        drawWrappedCenteredText("Syncing weather...", centerX, topY, maxWidth, font,
+                                theme.muted, background, 4);
+        return true;
+    }
+    const char *message = activeClockMessage();
+    if (message != nullptr) {
+        drawWrappedCenteredText(message, centerX, topY, maxWidth, font, theme.text, background, 4);
+        return true;
+    }
+    return false;
+}
+
+// --- face: cards -------------------------------------------------------------
+// A rounded time card over a rounded weather card.
+void renderCardsFace() {
+    const ThemePalette &theme = activeTheme();
+    const int conditionFonts[] = {FONT_BODY, FONT_LABEL};
+    const int labelFonts[] = {FONT_LABEL, FONT_INFO};
+
+    drawClockHeader();
+    drawRoundedPanel(8, kClockCardY, 224, kClockCardHeight, theme.surface, theme.surfaceAlt);
+
+    if (!hasWeatherContent() && !weatherWaitingForSync() && activeClockMessage() == nullptr) {
         return;
     }
 
-    drawRoundedPanel(8, 154, 224, 66, theme.surfaceAlt, theme.surfaceAlt);
-    if (hasWeatherContent()) {
-        const WeatherData *weather = effectiveWeatherData();
-        int footerLeft = 18;
-        tft.setTextDatum(TL_DATUM);
-        tft.setTextFont(FONT_INFO);
-        tft.setTextColor(theme.muted, theme.surfaceAlt);
-        String location = (weather != nullptr && weather->location[0] != '\0') ? weather->location : "Weather";
-        tft.drawString(location, footerLeft, 166, FONT_INFO);
+    drawRoundedPanel(8, kClockFooterY, 224, kClockFooterHeight, theme.surfaceAlt, theme.surfaceAlt);
 
-        drawAdaptiveBadge(158,
-                          160,
-                          62,
-                          24,
-                          formatWeatherTemperature(weather->temperature),
-                          footerTemperatureFonts,
-                          sizeof(footerTemperatureFonts) / sizeof(footerTemperatureFonts[0]),
-                          theme.accentSoft,
-                          theme.accent);
+    const int iconCenterX = 44;
+    const int iconCenterY = kClockFooterY + 40;
+    const int textLeft = 82;
 
-        tft.setTextColor(theme.text, theme.surfaceAlt);
-        String condition = weather->condition[0] != '\0' ? weather->condition : "Ready";
-        drawAdaptiveText(condition,
-                         footerLeft,
-                         188,
-                         132,
-                         TL_DATUM,
-                         footerConditionFonts,
-                         sizeof(footerConditionFonts) / sizeof(footerConditionFonts[0]),
-                         theme.text,
-                         theme.surfaceAlt);
-
-        tft.setTextFont(FONT_INFO);
-        tft.setTextColor(theme.muted, theme.surfaceAlt);
-        String summary = "H " + formatWeatherTemperature(weather->high) +
-                         "  L " + formatWeatherTemperature(weather->low) +
-                         "  Rain " + String(weather->rainChance) + "%";
-        drawAdaptiveText(summary,
-                         footerLeft,
-                         202,
-                         188,
-                         TL_DATUM,
-                         compactFonts,
-                         sizeof(compactFonts) / sizeof(compactFonts[0]),
-                         theme.muted,
-                         theme.surfaceAlt);
-    } else if (weatherWaitingForSync()) {
-        drawWrappedCenteredText("Syncing weather...", 120, 182, 192, FONT_INFO, theme.muted, theme.surfaceAlt, 2);
-    } else if (clockMessage != nullptr) {
-        drawWrappedCenteredText(clockMessage, 120, 178, 192, FONT_LABEL, theme.text, theme.surfaceAlt, 2);
+    if (!hasWeatherContent()) {
+        if (weatherWaitingForSync()) {
+            drawWeatherIcon(iconCenterX, iconCenterY, 48, -1, theme.muted, theme.muted,
+                            theme.surfaceAlt, false, false);
+            drawWrappedCenteredText("Syncing weather...", 150, kClockFooterY + 34, 132,
+                                    FONT_LABEL, theme.muted, theme.surfaceAlt, 2);
+        } else {
+            drawWrappedCenteredText(activeClockMessage(), 120, kClockFooterY + 30, 192,
+                                    FONT_LABEL, theme.text, theme.surfaceAlt, 2);
+        }
+        return;
     }
+
+    const WeatherData *weather = effectiveWeatherData();
+    WeatherContext context = weatherContextFor(weather);
+    drawWeatherIcon(iconCenterX, iconCenterY, 48, weather->weatherCode,
+                    theme.text, theme.accent, theme.surfaceAlt, context.isNight, context.nearSunEvent);
+
+    // Next sun event under the icon: a small up/down marker plus the time.
+    if (context.nextSunEventMinutes >= 0) {
+        int markerX = 24;
+        int markerY = kClockFooterY + 76;
+        drawTriangleMarker(markerX, markerY - 1, 4, context.isNight,
+                           context.isNight ? theme.accent : theme.muted);
+        char sunText[12];
+        snprintf(sunText, sizeof(sunText), "%d:%02d",
+                 context.nextSunEventMinutes / 60, context.nextSunEventMinutes % 60);
+        drawPaddedText(sunText, markerX + 8, markerY - 4, TL_DATUM, FONT_INFO, 0,
+                       theme.muted, theme.surfaceAlt);
+    }
+
+    // Pin the NUMBER's right edge, not the cluster's, so the ring and the unit letter land
+    // in the same place whatever the temperature is.
+    const int tempNumberRight = 202;
+    const int tempTop = kClockFooterY + 6;
+    int tempNumberWidth = tft.textWidth(String(weather->temperature), FONT_TITLE);
+    drawTemperatureCluster(weather->temperature, tempNumberRight - tempNumberWidth, tempTop,
+                           FONT_TITLE, FONT_LABEL, 5, theme.text, theme.accent, theme.surfaceAlt);
+
+    // Only the top text row shares height with the digits, so it is the only one bounded by
+    // where they start; the other two now sit below the digits' baseline and get full width.
+    String location = weather->location[0] != '\0' ? weather->location : "Weather";
+    drawAdaptiveText(location, textLeft, kClockFooterY + 8,
+                     max(24, (tempNumberRight - tempNumberWidth) - textLeft - 6), TL_DATUM,
+                     labelFonts, sizeof(labelFonts) / sizeof(labelFonts[0]),
+                     theme.muted, theme.surfaceAlt);
+
+    String condition = weather->condition[0] != '\0' ? weather->condition : "Ready";
+    drawAdaptiveText(condition, textLeft, kClockFooterY + 46, 140, TL_DATUM,
+                     conditionFonts, sizeof(conditionFonts) / sizeof(conditionFonts[0]),
+                     theme.text, theme.surfaceAlt);
+
+    char summary[40];
+    snprintf(summary, sizeof(summary), "H %d  L %d  Rain %d%%",
+             weather->high, weather->low, weather->rainChance);
+    drawAdaptiveText(summary, textLeft, kClockFooterY + 74, 140, TL_DATUM,
+                     labelFonts, sizeof(labelFonts) / sizeof(labelFonts[0]),
+                     theme.muted, theme.surfaceAlt);
+}
+
+// --- face: bold --------------------------------------------------------------
+// No panels behind the time: a badge strip, the biggest digits the fonts allow, a
+// temperature the same size, and two chips along the bottom.
+void renderBoldFace() {
+    const ThemePalette &theme = activeTheme();
+    tft.fillScreen(theme.background);
+
+    bool haveWeather = hasWeatherContent();
+    const WeatherData *weather = haveWeather ? effectiveWeatherData() : nullptr;
+
+    String badge = (haveWeather && weather->location[0] != '\0') ? String(weather->location)
+                                                                 : String("CLOCK");
+    badge.toUpperCase();
+    int badgeWidth = min(92, tft.textWidth(badge, FONT_INFO) + 14);
+    tft.fillRoundRect(8, 5, badgeWidth, 18, 4, theme.accent);
+    const int badgeFonts[] = {FONT_INFO};
+    drawAdaptiveText(badge, 8 + (badgeWidth / 2), 14, badgeWidth - 8, MC_DATUM,
+                     badgeFonts, 1, theme.background, theme.accent);
+
+    String subtitle = headerSubtitle();
+    int subtitleWidth = 0;
+    if (!subtitle.isEmpty()) {
+        subtitleWidth = tft.textWidth(subtitle, FONT_INFO) + 10;
+        drawPaddedText(subtitle, 232, 10, TR_DATUM, FONT_INFO, 0, theme.muted, theme.background);
+    }
+
+    if (haveWeather && weather->condition[0] != '\0') {
+        String condition = weather->condition;
+        condition.toUpperCase();
+        int conditionLeft = 8 + badgeWidth + 8;
+        int conditionWidth = (DISPLAY_WIDTH - 8 - subtitleWidth) - conditionLeft;
+        if (conditionWidth > 20) {
+            const int conditionFonts[] = {FONT_LABEL, FONT_INFO};
+            drawAdaptiveText(condition, conditionLeft, 6, conditionWidth, TL_DATUM,
+                             conditionFonts, sizeof(conditionFonts) / sizeof(conditionFonts[0]),
+                             theme.accent, theme.background);
+        }
+    }
+
+    tft.fillRect(8, kBoldRuleY, 224, 2, theme.accent);
+    tft.drawFastHLine(8, 110, 224, theme.surfaceAlt);
+
+    if (!haveWeather) {
+        drawClockFallbackMessage(DISPLAY_WIDTH / 2, 150, 200, FONT_LABEL, theme.background);
+        return;
+    }
+
+    WeatherContext context = weatherContextFor(weather);
+    drawWeatherIcon(46, 142, 52, weather->weatherCode, theme.text, theme.accent,
+                    theme.background, context.isNight, context.nearSunEvent);
+
+    int tempWidth = temperatureClusterWidth(weather->temperature, FONT_HUGE, FONT_BODY, 6);
+    drawTemperatureCluster(weather->temperature, 228 - tempWidth, 118, FONT_HUGE, FONT_BODY, 6,
+                           theme.text, theme.accent, theme.background);
+
+    // Left chip: rain chance with a segmented gauge.
+    tft.fillRoundRect(8, 176, 110, 52, 6, theme.surface);
+    drawPaddedText("RAIN", 16, 182, TL_DATUM, FONT_INFO, 0, theme.muted, theme.surface);
+    drawPaddedText(String(weather->rainChance) + "%", 16, 192, TL_DATUM, FONT_BODY, 0,
+                   theme.accent, theme.surface);
+    drawSegmentBar(16, 220, 94, 4, weather->rainChance, 4, theme.accent, theme.surfaceAlt);
+
+    // Right chip: today's high over today's low.
+    tft.fillRoundRect(122, 176, 110, 52, 6, theme.surface);
+    const int chipRows[2] = {181, 205};
+    const int chipValues[2] = {weather->high, weather->low};
+    const uint16_t chipColors[2] = {theme.warning, theme.accent};
+    for (int row = 0; row < 2; ++row) {
+        String value = String(chipValues[row]);
+        drawTriangleMarker(134, chipRows[row] + 8, 5, row == 0, chipColors[row]);
+        drawPaddedText(value, 146, chipRows[row], TL_DATUM, FONT_LABEL, 0, theme.text, theme.surface);
+        drawDegreeRing(146 + tft.textWidth(value, FONT_LABEL) + 5, chipRows[row] + 4, 3,
+                       theme.muted, theme.surface);
+    }
+}
+
+// --- face: matrix ------------------------------------------------------------
+// Instrument panel: a clock strip over bordered tiles, every value in its own well.
+void renderMatrixFace() {
+    const ThemePalette &theme = activeTheme();
+    tft.fillScreen(theme.background);
+
+    tft.fillRect(0, 0, DISPLAY_WIDTH, kMatrixZoneHeight - 2, theme.surface);
+    tft.fillRect(0, kMatrixZoneHeight - 2, DISPLAY_WIDTH, 2, theme.accent);
+
+    bool haveWeather = hasWeatherContent();
+    const WeatherData *weather = haveWeather ? effectiveWeatherData() : nullptr;
+
+    tft.fillRect(8, 6, 4, 4, theme.accent);
+    String location = (haveWeather && weather->location[0] != '\0') ? String(weather->location)
+                                                                    : String("CLOCK");
+    location.toUpperCase();
+    drawPaddedText(location, 18, 4, TL_DATUM, FONT_INFO, 0, theme.accent, theme.surface);
+
+    String subtitle = headerSubtitle();
+    if (!subtitle.isEmpty()) {
+        drawPaddedText(subtitle, 232, 4, TR_DATUM, FONT_INFO, 0, theme.muted, theme.surface);
+    }
+
+    tft.drawFastVLine(kMatrixSideX - 10, 28, 52, theme.surfaceAlt);
+    drawPaddedText("SEC", kMatrixSideX, kMatrixSecondsY + 4, TL_DATUM, FONT_INFO, 0,
+                   theme.muted, theme.surface);
+
+    bool synced = hasTimeSync();
+    drawPaddedText(synced ? "NTP OK" : "NO TIME", 8, kMatrixTapeY, TL_DATUM, FONT_INFO, 0,
+                   synced ? theme.positive : theme.negative, theme.surface);
+    drawPaddedText(displayState.apMode ? "AP" : "STA", 232, kMatrixTapeY, TR_DATUM, FONT_INFO, 0,
+                   theme.muted, theme.surface);
+
+    if (!haveWeather) {
+        drawClockFallbackMessage(DISPLAY_WIDTH / 2, 160, 200, FONT_LABEL, theme.background);
+        return;
+    }
+
+    WeatherContext context = weatherContextFor(weather);
+
+    // Row A: the icon in its own well, then temperature with the day's range beside it.
+    drawTile(6, 120, 58, 64, theme.surfaceAlt, theme.accentSoft);
+    drawWeatherIcon(35, 144, 40, weather->weatherCode, theme.text, theme.accent,
+                    theme.surfaceAlt, context.isNight, context.nearSunEvent);
+    char codeText[12];
+    snprintf(codeText, sizeof(codeText), "WMO %d", weather->weatherCode);
+    drawPaddedText(codeText, 35, 172, TC_DATUM, FONT_INFO, 0, theme.accent, theme.surfaceAlt);
+
+    drawTile(70, 120, 164, 64, theme.surfaceAlt, theme.accentSoft);
+    // Step the number down a size rather than let it reach the range divider: "-19" and
+    // "100" are both wider than the 48 px face has room for here.
+    const int tempClusterRight = 176;
+    int tempNumberFont =
+        (78 + temperatureClusterWidth(weather->temperature, FONT_TITLE, FONT_LABEL, 5)) > tempClusterRight
+            ? FONT_BODY
+            : FONT_TITLE;
+    drawTemperatureCluster(weather->temperature, 78, 122, tempNumberFont, FONT_LABEL, 5,
+                           theme.text, theme.accent, theme.surfaceAlt);
+
+    const int conditionFonts[] = {FONT_INFO};
+    drawAdaptiveText(weather->condition[0] != '\0' ? weather->condition : "Ready",
+                     78, 172, 96, TL_DATUM, conditionFonts, 1, theme.warning, theme.surfaceAlt);
+
+    // Range column. Label and value share a centre line (ML/MR datums) so the 8 px label
+    // does not ride high against the 16 px number, and each value gets its own degree ring.
+    // The value is adaptive so a three-digit reading steps down instead of hitting the label.
+    tft.drawFastVLine(180, 126, 52, theme.accentSoft);
+    const int rangeValueFonts[] = {FONT_LABEL, FONT_INFO};
+    const int rangeRowY[2] = {134, 164};
+    const int rangeValues[2] = {weather->high, weather->low};
+    const char *rangeLabels[2] = {"HI", "LO"};
+    const uint16_t rangeColors[2] = {theme.negative, theme.accent};
+    for (int row = 0; row < 2; ++row) {
+        drawPaddedText(rangeLabels[row], 186, rangeRowY[row], ML_DATUM, FONT_INFO, 0,
+                       rangeColors[row], theme.surfaceAlt);
+        drawAdaptiveText(String(rangeValues[row]), 222, rangeRowY[row], 22, MR_DATUM,
+                         rangeValueFonts, sizeof(rangeValueFonts) / sizeof(rangeValueFonts[0]),
+                         theme.text, theme.surfaceAlt);
+        drawDegreeRing(228, rangeRowY[row] - 4, 3, theme.muted, theme.surfaceAlt);
+    }
+
+    // Row B: three sensor wells.
+    const int tileX[3] = {6, 84, 162};
+    char precipValue[12];
+    char humidityValue[12];
+    char pressureValue[12];
+    snprintf(precipValue, sizeof(precipValue), "%d%%", weather->rainChance);
+    if (weather->humidity >= 0) {
+        snprintf(humidityValue, sizeof(humidityValue), "%d%%", weather->humidity);
+    } else {
+        strcpy(humidityValue, "--");
+    }
+    if (weather->pressure > 0) {
+        snprintf(pressureValue, sizeof(pressureValue), "%d", weather->pressure);
+    } else {
+        strcpy(pressureValue, "--");
+    }
+    const char *tileLabels[3] = {"PRECIP", "HUMID", "BARO"};
+    const char *tileValues[3] = {precipValue, humidityValue, pressureValue};
+    const uint16_t tileColors[3] = {theme.accent, theme.warning, theme.positive};
+
+    for (int index = 0; index < 3; ++index) {
+        drawTile(tileX[index], 190, 72, 42, theme.surfaceAlt, theme.accentSoft);
+        drawPaddedText(tileLabels[index], tileX[index] + 5, 194, TL_DATUM, FONT_INFO, 0,
+                       theme.muted, theme.surfaceAlt);
+        drawPaddedText(tileValues[index], tileX[index] + 5, 204, TL_DATUM, FONT_LABEL, 0,
+                       tileColors[index], theme.surfaceAlt);
+    }
+    drawSegmentBar(tileX[0] + 5, 224, 62, 4, weather->rainChance, 4, theme.accent, theme.background);
+    if (weather->humidity >= 0) {
+        drawLevelBar(tileX[1] + 5, 224, 62, 4, weather->humidity, theme.warning, theme.background);
+    }
+    drawPaddedText("hPa", tileX[2] + 5, 223, TL_DATUM, FONT_INFO, 0, theme.muted, theme.surfaceAlt);
+}
+
+// --- face: radial ------------------------------------------------------------
+// Point on a gauge circle. Angle 0 is 6 o'clock and grows towards 9, 12 then 3 o'clock,
+// which is how TFT_eSPI's drawArc() measures it.
+void radialPoint(int angleDegrees, int radius, int &x, int &y) {
+    float radians = static_cast<float>(angleDegrees) * DEG_TO_RAD;
+    x = kRadialCenter - static_cast<int>(lroundf(sinf(radians) * radius));
+    y = kRadialCenter + static_cast<int>(lroundf(cosf(radians) * radius));
+}
+
+void renderRadialFace() {
+    const ThemePalette &theme = activeTheme();
+    tft.fillScreen(theme.background);
+
+    bool haveWeather = hasWeatherContent();
+    const WeatherData *weather = haveWeather ? effectiveWeatherData() : nullptr;
+
+    // Two perimeter gauges: rain over the top, today's temperature range along the
+    // bottom. Tracks go down first so an empty gauge still reads as a gauge. The
+    // flanks either side stay clear, which is where the seconds sit.
+    tft.drawArc(kRadialCenter, kRadialCenter, kRadialOuterRadius, kRadialInnerRadius,
+                120, 240, theme.surfaceAlt, theme.background, false);
+    tft.drawArc(kRadialCenter, kRadialCenter, kRadialOuterRadius, kRadialInnerRadius,
+                300, 60, theme.surfaceAlt, theme.background, false);
+
+    if (!haveWeather) {
+        drawClockFallbackMessage(kRadialCenter, 62, 150, FONT_INFO, theme.background);
+        return;
+    }
+
+    int rain = constrain(weather->rainChance, 0, 100);
+    if (rain > 0) {
+        tft.drawArc(kRadialCenter, kRadialCenter, kRadialOuterRadius, kRadialInnerRadius,
+                    120, 120 + ((rain * 120) / 100), theme.accent, theme.background, false);
+    }
+    drawPaddedText(String(rain) + "%", kRadialCenter, 22, TC_DATUM, FONT_INFO, 0,
+                   theme.accent, theme.background);
+
+    // Bottom gauge: the low sits at the left end, the high at the right end, and the
+    // marker shows where the current temperature falls between them.
+    int span = weather->high - weather->low;
+    int position = span > 0
+                       ? constrain(((weather->temperature - weather->low) * 100) / span, 0, 100)
+                       : 50;
+    int markerAngle = (60 - ((position * 120) / 100) + 360) % 360;
+    if (markerAngle != 60) {
+        tft.drawArc(kRadialCenter, kRadialCenter, kRadialOuterRadius, kRadialInnerRadius,
+                    markerAngle, 60, theme.warning, theme.background, false);
+    }
+    int markerX = 0;
+    int markerY = 0;
+    radialPoint(markerAngle, (kRadialOuterRadius + kRadialInnerRadius) / 2, markerX, markerY);
+    tft.fillCircle(markerX, markerY, 5, theme.text);
+
+    WeatherContext context = weatherContextFor(weather);
+
+    String pill = weather->condition[0] != '\0' ? String(weather->condition) : String("Ready");
+    if (weather->location[0] != '\0') {
+        pill = String(weather->location) + "  " + pill;
+    }
+    tft.fillRoundRect(54, 40, 132, 18, 9, theme.surface);
+    const int pillFonts[] = {FONT_INFO};
+    drawAdaptiveText(pill, kRadialCenter, 49, 122, MC_DATUM, pillFonts, 1, theme.text, theme.surface);
+
+    // Icon sits at 78, not 82: the storm glyph's bolt runs 20 px below centre and would
+    // otherwise poke into the big-time band at y=102 and lose its tip on every blink.
+    drawWeatherIcon(92, 78, 30, weather->weatherCode, theme.text, theme.accent,
+                    theme.background, context.isNight, context.nearSunEvent);
+
+    drawTemperatureCluster(weather->temperature, 122, 68, FONT_BODY, FONT_LABEL, 4,
+                           theme.text, theme.accent, theme.background);
+
+    String lowText = "LO " + String(weather->low);
+    drawPaddedText(lowText, 56, 180, TL_DATUM, FONT_INFO, 0, theme.accent, theme.background);
+    drawDegreeRing(56 + tft.textWidth(lowText, FONT_INFO) + 4, 181, 2, theme.accent, theme.background);
+    drawPaddedText("HI " + String(weather->high), 176, 180, TR_DATUM, FONT_INFO, 0,
+                   theme.warning, theme.background);
+    drawDegreeRing(181, 181, 2, theme.warning, theme.background);
+}
+
+void renderClockPage() {
+    clockMetaCache.valid = false;
+    switch (dashboardConfig.clockFace) {
+        case DASHBOARD_CLOCK_FACE_BOLD:
+            renderBoldFace();
+            break;
+        case DASHBOARD_CLOCK_FACE_MATRIX:
+            renderMatrixFace();
+            break;
+        case DASHBOARD_CLOCK_FACE_RADIAL:
+            renderRadialFace();
+            break;
+        default:
+            renderCardsFace();
+            break;
+    }
+    updateClockDynamicArea();
 }
 
 void renderWeatherPage() {
@@ -2177,11 +2990,6 @@ void displayInit() {
     displayState.currentPage = DASHBOARD_PAGE_CLOCK;
     clearTemporaryMessage();
 
-    clockDynamicSprite.deleteSprite();
-    clockDynamicSpriteReady = false;
-    clockDynamicSpriteAttempted = false;
-    clockDynamicSpriteAllowed = false;
-
     pinMode(PIN_BACKLIGHT, OUTPUT);
     analogWriteFreq(1000);
     analogWriteRange(1023);
@@ -2198,56 +3006,9 @@ void displayApplyBrightness(int brightness) {
     setBacklightLevel(brightness);
 }
 
-void displaySetClockSpriteAllowed(bool allowed) {
-    if (clockDynamicSpriteAllowed == allowed &&
-        (!clockDynamicSpriteReady || allowed)) {
-        return;
-    }
-
-    clockDynamicSpriteAllowed = allowed;
-    clockDynamicSpriteAttempted = false;
-
-    if (!allowed) {
-        clockDynamicSprite.deleteSprite();
-        clockDynamicSpriteReady = false;
-    }
-}
-
-void displaySuspendDynamicResources() {
-    if (dynamicResourceSuspendDepth == 0) {
-        resumeClockSpriteAfterDynamicSuspend = clockDynamicSpriteAllowed;
-        if (clockDynamicSpriteReady || clockDynamicSpriteAllowed) {
-            clockDynamicSprite.deleteSprite();
-            clockDynamicSpriteReady = false;
-            clockDynamicSpriteAttempted = false;
-            clockDynamicSpriteAllowed = false;
-            logPrintf("Display resources suspended, free heap now %u", ESP.getFreeHeap());
-        }
-    }
-
-    if (dynamicResourceSuspendDepth < 255) {
-        ++dynamicResourceSuspendDepth;
-    }
-}
-
-void displayResumeDynamicResources() {
-    if (dynamicResourceSuspendDepth == 0) {
-        return;
-    }
-
-    --dynamicResourceSuspendDepth;
-    if (dynamicResourceSuspendDepth != 0) {
-        return;
-    }
-
-    if (resumeClockSpriteAfterDynamicSuspend) {
-        clockDynamicSpriteAllowed = true;
-        clockDynamicSpriteAttempted = false;
-        resumeClockSpriteAfterDynamicSuspend = false;
-    }
-}
-
 void displayUpdate() {
+    latchClockColonPhase();
+
     if (temporaryMessageVisible()) {
         uint32_t currentHash = temporaryMessageHash();
         uint8_t themeId = activeThemeIdValue();

@@ -14,6 +14,9 @@ constexpr uint32_t kValidEpochFloor = 946684800UL;  // 2000-01-01T00:00:00Z
 constexpr char kDefaultCustomBackground[] = "#080F1D";
 constexpr char kDefaultCustomSurface[] = "#122035";
 constexpr char kDefaultCustomAccent[] = "#58DAC1";
+constexpr char kDefaultClockHourColor[] = "#8AB4F8";    // cool blue
+constexpr char kDefaultClockMinuteColor[] = "#F9AB72";  // warm amber
+constexpr char kDefaultClockSecondColor[] = "#6FD3C7";  // teal
 constexpr char kDefaultCustomText[] = "#F0F7FF";
 constexpr char kDefaultNightCustomBackground[] = "#050B17";
 constexpr char kDefaultNightCustomSurface[] = "#101A28";
@@ -143,8 +146,12 @@ void setConfigDefaults() {
     dashboardConfig.rotationEnabled = false;  // a fresh device is a still clock; tick more chips + Auto rotate to cycle
     dashboardConfig.rotationIntervalSec = 10;
     dashboardConfig.use24Hour = true;
-    dashboardConfig.showSeconds = false;
-    dashboardConfig.showIp = false;
+    dashboardConfig.showSeconds = true;  // the clock face keeps HH:MM big and puts seconds beside it
+    dashboardConfig.showIp = true;       // IP in the header corner
+    copyString(dashboardConfig.clockHourColor, sizeof(dashboardConfig.clockHourColor), kDefaultClockHourColor);
+    copyString(dashboardConfig.clockMinuteColor, sizeof(dashboardConfig.clockMinuteColor), kDefaultClockMinuteColor);
+    copyString(dashboardConfig.clockSecondColor, sizeof(dashboardConfig.clockSecondColor), kDefaultClockSecondColor);
+    dashboardConfig.clockFace = DASHBOARD_CLOCK_FACE_CARDS;
     dashboardConfig.enabledPages[DASHBOARD_PAGE_CLOCK] = true;  // memset above cleared the rest
 }
 
@@ -155,6 +162,11 @@ void setDataDefaults() {
     dashboardData.weather.high = 24;
     dashboardData.weather.low = 18;
     dashboardData.weather.rainChance = 10;
+    dashboardData.weather.weatherCode = -1;
+    dashboardData.weather.humidity = -1;
+    dashboardData.weather.pressure = -1;
+    dashboardData.weather.sunriseMinutes = -1;
+    dashboardData.weather.sunsetMinutes = -1;
 
     dashboardData.focus.durationMinutes = 25;
     dashboardData.focus.remainingSeconds = 25 * 60;
@@ -184,7 +196,13 @@ void normalizeConfig() {
     normalizeHexColor(dashboardConfig.nightCustomText,
                       sizeof(dashboardConfig.nightCustomText),
                       kDefaultNightCustomText);
+    normalizeHexColor(dashboardConfig.clockHourColor, sizeof(dashboardConfig.clockHourColor), kDefaultClockHourColor);
+    normalizeHexColor(dashboardConfig.clockMinuteColor, sizeof(dashboardConfig.clockMinuteColor), kDefaultClockMinuteColor);
+    normalizeHexColor(dashboardConfig.clockSecondColor, sizeof(dashboardConfig.clockSecondColor), kDefaultClockSecondColor);
     dashboardConfig.rotationIntervalSec = constrain(dashboardConfig.rotationIntervalSec, 3, 120);
+    if (dashboardConfig.clockFace >= DASHBOARD_CLOCK_FACE_COUNT) {
+        dashboardConfig.clockFace = DASHBOARD_CLOCK_FACE_CARDS;
+    }
     ensureAtLeastOnePageEnabled();
 }
 
@@ -230,7 +248,12 @@ bool weatherEquals(const WeatherData &left, const WeatherData &right) {
            left.temperature == right.temperature &&
            left.high == right.high &&
            left.low == right.low &&
-           left.rainChance == right.rainChance;
+           left.rainChance == right.rainChance &&
+           left.weatherCode == right.weatherCode &&
+           left.humidity == right.humidity &&
+           left.pressure == right.pressure &&
+           left.sunriseMinutes == right.sunriseMinutes &&
+           left.sunsetMinutes == right.sunsetMinutes;
 }
 
 bool marketEquals(const MarketData &left, const MarketData &right) {
@@ -297,7 +320,8 @@ bool configEquals(const DashboardConfig &left, const DashboardConfig &right) {
         left.rotationIntervalSec != right.rotationIntervalSec ||
         left.use24Hour != right.use24Hour ||
         left.showSeconds != right.showSeconds ||
-        left.showIp != right.showIp) {
+        left.showIp != right.showIp ||
+        left.clockFace != right.clockFace) {
         return false;
     }
 
@@ -353,6 +377,11 @@ void fillConfigJson(JsonObject root) {
     root["use24Hour"] = dashboardConfig.use24Hour;
     root["showSeconds"] = dashboardConfig.showSeconds;
     root["showIp"] = dashboardConfig.showIp;
+    JsonObject clockColors = root["clockColors"].to<JsonObject>();
+    clockColors["hour"] = dashboardConfig.clockHourColor;
+    clockColors["minute"] = dashboardConfig.clockMinuteColor;
+    clockColors["second"] = dashboardConfig.clockSecondColor;
+    root["clockFace"] = dashboardConfig.clockFace;
 
     JsonObject customTheme = root["customTheme"].to<JsonObject>();
     customTheme["background"] = dashboardConfig.customBackground;
@@ -395,6 +424,11 @@ void fillDataJson(JsonObject root) {
     weather["high"] = dashboardData.weather.high;
     weather["low"] = dashboardData.weather.low;
     weather["rainChance"] = dashboardData.weather.rainChance;
+    weather["weatherCode"] = dashboardData.weather.weatherCode;
+    weather["humidity"] = dashboardData.weather.humidity;
+    weather["pressure"] = dashboardData.weather.pressure;
+    weather["sunriseMinutes"] = dashboardData.weather.sunriseMinutes;
+    weather["sunsetMinutes"] = dashboardData.weather.sunsetMinutes;
 
     JsonArray markets = root["markets"].to<JsonArray>();
     for (uint8_t marketIndex = 0; marketIndex < DASHBOARD_MARKET_COUNT; ++marketIndex) {
@@ -564,6 +598,23 @@ void applyConfigObject(JsonObjectConst root) {
     if (!root["showIp"].isNull()) {
         dashboardConfig.showIp = root["showIp"].as<bool>();
     }
+    if (!root["clockFace"].isNull()) {
+        int face = root["clockFace"].as<int>();
+        dashboardConfig.clockFace = static_cast<uint8_t>(
+            constrain(face, 0, DASHBOARD_CLOCK_FACE_COUNT - 1));
+    }
+    JsonObjectConst clockColors = root["clockColors"];
+    if (!clockColors.isNull()) {
+        if (!clockColors["hour"].isNull()) {
+            copyString(dashboardConfig.clockHourColor, sizeof(dashboardConfig.clockHourColor), clockColors["hour"]);
+        }
+        if (!clockColors["minute"].isNull()) {
+            copyString(dashboardConfig.clockMinuteColor, sizeof(dashboardConfig.clockMinuteColor), clockColors["minute"]);
+        }
+        if (!clockColors["second"].isNull()) {
+            copyString(dashboardConfig.clockSecondColor, sizeof(dashboardConfig.clockSecondColor), clockColors["second"]);
+        }
+    }
 
     JsonObjectConst customTheme = root["customTheme"].as<JsonObjectConst>();
     if (!customTheme.isNull()) {
@@ -656,6 +707,15 @@ void applyWeatherObject(JsonObjectConst weather) {
     }
     if (!weather["rainChance"].isNull()) {
         dashboardData.weather.rainChance = weather["rainChance"].as<int>();
+    }
+    if (!weather["humidity"].isNull()) {
+        dashboardData.weather.humidity = weather["humidity"].as<int>();
+    }
+    if (!weather["pressure"].isNull()) {
+        dashboardData.weather.pressure = weather["pressure"].as<int>();
+    }
+    if (!weather["weatherCode"].isNull()) {
+        dashboardData.weather.weatherCode = weather["weatherCode"].as<int>();
     }
 }
 
