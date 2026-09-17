@@ -138,6 +138,10 @@ bool feedsMarketConfigured(uint8_t index);
 bool feedsHasWeatherData();
 bool feedsHasMarketData(uint8_t index);
 bool feedsWeatherUsesFahrenheit();
+// Seconds since the last SUCCESSFUL weather fetch, or -1 if there has never been one.
+long feedsWeatherAgeSeconds();
+// Age past which the reading should be treated as stale on screen.
+long feedsWeatherStaleAfterSeconds();
 const WeatherData* feedsWeatherData();
 const MarketData* feedsMarketData(uint8_t index);
 

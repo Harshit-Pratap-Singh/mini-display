@@ -11,7 +11,8 @@
 
 enum DashboardPageId : uint8_t {
     DASHBOARD_PAGE_CLOCK = 0,
-    DASHBOARD_PAGE_WEATHER,
+    // No weather page: every clock face already draws the weather, and we only fetch one
+    // forecast day, so a separate page had nothing extra to show. Removed 2026-09-17.
     DASHBOARD_PAGE_MARKETS,
     DASHBOARD_PAGE_HOME,
     DASHBOARD_PAGE_FOCUS,

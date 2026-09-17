@@ -1169,7 +1169,6 @@ input[type="submit"]:disabled,
 
                     <div class="chip-grid">
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageClock"><span>Clock</span></label>
-                        <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageWeather"><span>Weather</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageMarkets"><span>Markets</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageHome"><span>Home Assistant</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageFocus"><span>Focus</span></label>
@@ -1945,7 +1944,6 @@ const defaultNightCustomTheme = {
 
 const dashboardPageControls = [
     { key: "clock", id: "pageClock" },
-    { key: "weather", id: "pageWeather" },
     { key: "markets", id: "pageMarkets" },
     { key: "home", id: "pageHome" },
     { key: "focus", id: "pageFocus" },

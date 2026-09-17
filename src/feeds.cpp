@@ -2415,6 +2415,21 @@ bool feedsHasMarketData(uint8_t index) {
     return index < DASHBOARD_MARKET_COUNT && feedRuntime.markets[index].hasData;
 }
 
+long feedsWeatherAgeSeconds() {
+    if (!feedRuntime.weather.hasData || feedRuntime.weather.lastSuccessMs == 0) {
+        return -1;
+    }
+    return static_cast<long>((millis() - feedRuntime.weather.lastSuccessMs) / 1000UL);
+}
+
+// Two missed refreshes, and never less than an hour: one skipped poll is normal and should
+// not put an age on screen, and the age is reported in whole hours so a shorter threshold
+// would render "0h ago".
+long feedsWeatherStaleAfterSeconds() {
+    long twoRefreshes = static_cast<long>(feedConfig.weather.refreshMinutes) * 2L * 60L;
+    return twoRefreshes > 3600L ? twoRefreshes : 3600L;
+}
+
 bool feedsWeatherUsesFahrenheit() {
     return feedConfig.weather.source == WEATHER_FEED_OPEN_METEO && feedConfig.weather.useFahrenheit;
 }

@@ -306,3 +306,15 @@ Taken from the TFT_eSPI font headers; these decide what can be drawn where.
 
 ### Weather feed additions
 `current=` now also requests `relative_humidity_2m,surface_pressure` (both filtered, both parsed to `-1` when absent — the `memset` before parsing would otherwise leave them reading as 0 %). `fillWeatherDataJson()` now emits `weatherCode`, `humidity`, `pressure`, `sunriseMinutes`, `sunsetMinutes`, so every parsed value is inspectable over HTTP. Bengaluru sample: humidity 74 %, pressure 911 hPa (surface, not sea-level adjusted — the city is ~920 m up).
+
+## Milestone 4 — weather, closed by deletion (2026-09-17)
+
+The separate weather page is **gone** (`DASHBOARD_PAGE_WEATHER`, `renderWeatherPage()`, its chip, and `drawMetricColumn`/`drawDividerColumn`/`formatWeatherTemperature` which were its only users). Every clock face already draws the weather, and `forecast_days=1` means there was no extra data a dedicated page could show. Pages serialize **by name** (`pages["clock"]` etc.), so removing an enum value does not corrupt a stored `/dashboard-config.json` — the dropped key is simply ignored on load. Verified on hardware after flashing: the config survived, `POST /page?id=9` now returns 400 (the count fell from 9 to 8) and `?id=1` returns 409 rather than rendering a ghost page.
+
+### Stale-weather marker
+`feedsWeatherAgeSeconds()` / `feedsWeatherStaleAfterSeconds()` in `src/feeds.cpp`; `weatherIsStale()` / `weatherConditionLine()` in `src/display.cpp`. Past two missed refreshes (floor: 1 hour) the condition line becomes `1h ago  Drizzle` in the theme's warning colour. Two design constraints that are easy to get wrong:
+
+- **The age must lead the string.** `drawAdaptiveText` clips from the end, so an appended age is the first thing cut. With Matrix's 96 px slot, `Partly cloudy  45m ago` rendered as `Partly cloudy ..` — the age never appeared on three of the four faces.
+- **Whole hours, never minutes.** The condition line is hashed into `hashClockTimeDerivedState()`, so it drives a full `fillScreen` redraw. Minute granularity meant ~60 full redraws an hour, most of them producing identical pixels once clipped. Hour granularity ties each redraw to a visible change, and the 1-hour threshold floor keeps `0h ago` from ever rendering.
+
+Flash after milestone 4: **704,343 B (67.4%)** — smaller than milestone 3's 704,827 B, because deleting the page paid for the new marker and 484 B over.

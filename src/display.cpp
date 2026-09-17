@@ -900,34 +900,6 @@ void drawDividerLine(int x, int y, int width, uint16_t color) {
     tft.drawFastHLine(x, y, width, color);
 }
 
-void drawDividerColumn(int x, int y, int height, uint16_t color) {
-    tft.drawFastVLine(x, y, height, color);
-}
-
-void drawMetricColumn(int centerX,
-                      int topY,
-                      const String &label,
-                      const String &value,
-                      uint16_t labelColor,
-                      uint16_t valueColor,
-                      uint16_t backgroundColor) {
-    tft.setTextDatum(TC_DATUM);
-    tft.setTextFont(FONT_INFO);
-    tft.setTextColor(labelColor, backgroundColor);
-    tft.drawString(label, centerX, topY, FONT_INFO);
-
-    const int valueFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
-    drawAdaptiveText(value,
-                     centerX,
-                     topY + 16,
-                     58,
-                     TC_DATUM,
-                     valueFonts,
-                     sizeof(valueFonts) / sizeof(valueFonts[0]),
-                     valueColor,
-                     backgroundColor);
-}
-
 // The built-in fonts stop at ASCII 127, so there is no degree glyph to print.
 // Draw it: a small ring, sized to the font it sits next to.
 void drawDegreeRing(int x, int y, int radius, uint16_t color, uint16_t background) {
@@ -1152,10 +1124,6 @@ bool weatherWaitingForSync() {
 
 char weatherUnitSymbol() {
     return feedsWeatherUsesFahrenheit() ? 'F' : 'C';
-}
-
-String formatWeatherTemperature(int value) {
-    return String(value) + weatherUnitSymbol();
 }
 
 // Distance from the top of a built-in font's box down to its ink baseline, taken from the
@@ -1442,8 +1410,6 @@ bool dashboardPageHasRenderableContent(uint8_t pageId) {
     switch (pageId) {
         case DASHBOARD_PAGE_CLOCK:
             return true;
-        case DASHBOARD_PAGE_WEATHER:
-            return hasWeatherContent() || weatherWaitingForSync();
         case DASHBOARD_PAGE_MARKETS:
             return hasMarketContent() || anyMarketsWaitingForSync();
         case DASHBOARD_PAGE_HOME:
@@ -1490,6 +1456,31 @@ uint8_t nextAvailableDashboardPage(uint8_t currentPage) {
     }
 
     return dashboardFirstEnabledPage();
+}
+
+// Weather older than two refreshes is still shown - a reading from an hour ago beats a
+// blank panel - but it stops claiming to be current. The condition line carries the age,
+// because that is the field a stale reading misleads with most.
+bool weatherIsStale() {
+    long age = feedsWeatherAgeSeconds();
+    return age >= 0 && age > feedsWeatherStaleAfterSeconds();
+}
+
+// The age goes at the FRONT. drawAdaptiveText clips from the end, so an appended age is
+// the first thing cut on the narrow faces - which is precisely the part worth keeping.
+// Whole hours, never minutes: the line is hashed into the static half, so minute
+// granularity would force a full-screen redraw sixty times an hour to repaint pixels
+// that usually clip to the same thing anyway.
+String weatherConditionLine(const WeatherData *weather) {
+    String condition = (weather != nullptr && weather->condition[0] != '\0')
+                           ? String(weather->condition)
+                           : String("Ready");
+    if (!weatherIsStale()) {
+        return condition;
+    }
+    long ageHours = feedsWeatherAgeSeconds() / 3600;
+    String age = (ageHours >= 48) ? (String(ageHours / 24) + "d ago") : (String(ageHours) + "h ago");
+    return age + "  " + condition;
 }
 
 // True when the local clock is outside sunrise..sunset, so icons switch to moon variants.
@@ -1564,6 +1555,8 @@ void hashWeatherData(uint32_t &hash) {
 // repaints them - the tape stays red all day and the icon never becomes a moon.
 void hashClockTimeDerivedState(uint32_t &hash) {
     hashValue(hash, hasTimeSync());
+    // Hash the rendered age text, not the raw age: it only changes when the pixels would.
+    hashCString(hash, weatherConditionLine(effectiveWeatherData()).c_str());
     WeatherContext context = weatherContextFor(effectiveWeatherData());
     hashValue(hash, context.isNight);
     hashValue(hash, context.nearSunEvent);
@@ -1658,9 +1651,6 @@ uint32_t dashboardStaticHash(uint8_t pageId) {
             } else if (activeClockMessage() != nullptr) {
                 hashCString(hash, activeClockMessage());
             }
-            break;
-        case DASHBOARD_PAGE_WEATHER:
-            hashWeatherData(hash);
             break;
         case DASHBOARD_PAGE_MARKETS:
             hashMarketData(hash);
@@ -2055,10 +2045,9 @@ void renderCardsFace() {
                      labelFonts, sizeof(labelFonts) / sizeof(labelFonts[0]),
                      theme.muted, theme.surfaceAlt);
 
-    String condition = weather->condition[0] != '\0' ? weather->condition : "Ready";
-    drawAdaptiveText(condition, textLeft, kClockFooterY + 46, 140, TL_DATUM,
+    drawAdaptiveText(weatherConditionLine(weather), textLeft, kClockFooterY + 46, 140, TL_DATUM,
                      conditionFonts, sizeof(conditionFonts) / sizeof(conditionFonts[0]),
-                     theme.text, theme.surfaceAlt);
+                     weatherIsStale() ? theme.warning : theme.text, theme.surfaceAlt);
 
     char summary[40];
     snprintf(summary, sizeof(summary), "H %d  L %d  Rain %d%%",
@@ -2095,7 +2084,7 @@ void renderBoldFace() {
     }
 
     if (haveWeather && weather->condition[0] != '\0') {
-        String condition = weather->condition;
+        String condition = weatherConditionLine(weather);
         condition.toUpperCase();
         int conditionLeft = 8 + badgeWidth + 8;
         int conditionWidth = (DISPLAY_WIDTH - 8 - subtitleWidth) - conditionLeft;
@@ -2103,7 +2092,7 @@ void renderBoldFace() {
             const int conditionFonts[] = {FONT_LABEL, FONT_INFO};
             drawAdaptiveText(condition, conditionLeft, 6, conditionWidth, TL_DATUM,
                              conditionFonts, sizeof(conditionFonts) / sizeof(conditionFonts[0]),
-                             theme.accent, theme.background);
+                             weatherIsStale() ? theme.warning : theme.accent, theme.background);
         }
     }
 
@@ -2204,8 +2193,8 @@ void renderMatrixFace() {
                            theme.text, theme.accent, theme.surfaceAlt);
 
     const int conditionFonts[] = {FONT_INFO};
-    drawAdaptiveText(weather->condition[0] != '\0' ? weather->condition : "Ready",
-                     78, 172, 96, TL_DATUM, conditionFonts, 1, theme.warning, theme.surfaceAlt);
+    drawAdaptiveText(weatherConditionLine(weather), 78, 172, 96, TL_DATUM, conditionFonts, 1,
+                     weatherIsStale() ? theme.negative : theme.warning, theme.surfaceAlt);
 
     // Range column. Label and value share a centre line (ML/MR datums) so the 8 px label
     // does not ride high against the 16 px number, and each value gets its own degree ring.
@@ -2314,13 +2303,14 @@ void renderRadialFace() {
 
     WeatherContext context = weatherContextFor(weather);
 
-    String pill = weather->condition[0] != '\0' ? String(weather->condition) : String("Ready");
+    String pill = weatherConditionLine(weather);
     if (weather->location[0] != '\0') {
         pill = String(weather->location) + "  " + pill;
     }
     tft.fillRoundRect(54, 40, 132, 18, 9, theme.surface);
     const int pillFonts[] = {FONT_INFO};
-    drawAdaptiveText(pill, kRadialCenter, 49, 122, MC_DATUM, pillFonts, 1, theme.text, theme.surface);
+    drawAdaptiveText(pill, kRadialCenter, 49, 122, MC_DATUM, pillFonts, 1,
+                     weatherIsStale() ? theme.warning : theme.text, theme.surface);
 
     // Icon sits at 78, not 82: the storm glyph's bolt runs 20 px below centre and would
     // otherwise poke into the big-time band at y=102 and lose its tip on every blink.
@@ -2355,57 +2345,6 @@ void renderClockPage() {
             break;
     }
     updateClockDynamicArea();
-}
-
-void renderWeatherPage() {
-    const ThemePalette &theme = activeTheme();
-    if (!hasWeatherContent()) {
-        if (weatherWaitingForSync()) {
-            drawPlaceholder("Weather", "Syncing live data.");
-            return;
-        }
-        drawPlaceholder("Weather", "Add weather data.");
-        return;
-    }
-
-    const WeatherData *weather = effectiveWeatherData();
-    const int heroFonts[] = {FONT_HUGE, FONT_TITLE, FONT_BODY};
-    const int compactFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
-    drawScreenChrome("Weather");
-    drawRoundedPanel(8, 36, 224, 110, theme.surface, theme.surfaceAlt);
-
-    tft.setTextDatum(TC_DATUM);
-    tft.setTextFont(FONT_INFO);
-    tft.setTextColor(theme.muted, theme.surface);
-    tft.drawString(weather->location[0] != '\0' ? weather->location : "Weather",
-                   120, 50, FONT_INFO);
-
-    drawAdaptiveText(formatWeatherTemperature(weather->temperature),
-                     120,
-                     74,
-                     180,
-                     TC_DATUM,
-                     heroFonts,
-                     sizeof(heroFonts) / sizeof(heroFonts[0]),
-                     theme.text,
-                     theme.surface);
-
-    drawAdaptiveText(weather->condition[0] != '\0' ? weather->condition : "Updated",
-                     120,
-                     118,
-                     180,
-                     TC_DATUM,
-                     compactFonts,
-                     sizeof(compactFonts) / sizeof(compactFonts[0]),
-                     theme.accent,
-                     theme.surface);
-
-    drawRoundedPanel(8, 156, 224, 64, theme.surfaceAlt, theme.surfaceAlt);
-    drawDividerColumn(82, 168, 40, theme.background);
-    drawDividerColumn(156, 168, 40, theme.background);
-    drawMetricColumn(45, 170, "High", formatWeatherTemperature(weather->high), theme.muted, theme.text, theme.surfaceAlt);
-    drawMetricColumn(119, 170, "Low", formatWeatherTemperature(weather->low), theme.muted, theme.text, theme.surfaceAlt);
-    drawMetricColumn(193, 170, "Rain", String(weather->rainChance) + "%", theme.muted, theme.text, theme.surfaceAlt);
 }
 
 void renderMarketsPage() {
@@ -2801,9 +2740,6 @@ void renderDashboardPage() {
     switch (displayState.currentPage) {
         case DASHBOARD_PAGE_CLOCK:
             renderClockPage();
-            break;
-        case DASHBOARD_PAGE_WEATHER:
-            renderWeatherPage();
             break;
         case DASHBOARD_PAGE_MARKETS:
             renderMarketsPage();
