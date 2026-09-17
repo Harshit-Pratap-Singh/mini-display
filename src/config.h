@@ -28,7 +28,9 @@
 #define WEB_SERVER_PORT 80
 
 // Time synchronization
-#define NTP_SERVER "pool.ntp.org"
+// Three servers, not one: lwIP's SNTP backs off exponentially (~12 min to recover) after a
+// single unanswered request, so one flaky server means a quarter-hour of "Waiting for time".
+#define NTP_SERVERS "time.google.com", "time.cloudflare.com", "pool.ntp.org"
 
 // Update intervals
 #define SCROLL_INTERVAL 30

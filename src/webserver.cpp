@@ -147,7 +147,7 @@ void restoreSavedDisplaySettings() {
     currentBrightness = appSettings.brightness;
     currentTheme = appSettings.theme;
 
-    configTime(appSettings.gmtOffset, 0, NTP_SERVER);
+    configTime(appSettings.gmtOffset, 0, NTP_SERVERS);
     applyEffectiveBrightness(true);
 }
 
@@ -390,7 +390,7 @@ bool applyRuntimeSettingsObject(JsonObjectConst settings, bool persist, String *
     if (!settings["gmtOffset"].isNull()) {
         long gmtOffset = constrain(settings["gmtOffset"].as<long>(), -12L * 3600L, 14L * 3600L);
         appSettings.gmtOffset = gmtOffset;
-        configTime(appSettings.gmtOffset, 0, NTP_SERVER);
+        configTime(appSettings.gmtOffset, 0, NTP_SERVERS);
         changed = true;
         timezoneChanged = true;
     }

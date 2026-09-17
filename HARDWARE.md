@@ -101,7 +101,7 @@ Baseline checks on the pre-commit-A build (STA, 192.168.1.14):
 | Check | Result |
 |---|---|
 | WiFi from saved credentials | connects on attempt 1, DHCP 192.168.1.14 |
-| NTP | **working** — device epoch matched the PC to the second (probed over HTTP: `POST /dashboard/data {"focus":{"remainingSeconds":N}}` makes the device stamp `dashboardCurrentEpoch()`, then read `data.focus.updatedAtEpoch` from `/dashboard.json`; it returns 0 when unsynced) |
+| NTP | **working, but the stock single-server config was broken on this network** — see the NTP section below |
 | Timezone | was `gmtOffset: 0` (UTC) out of the box → **set to 19800 (IST)**; `configTime(gmtOffset, 0, "pool.ntp.org")`, fixed offset, no DST |
 | Settings persistence across reboot | **all survived**: brightness + gmtOffset (EEPROM), rotation interval + page toggles (`/dashboard-config.json`), widget data (`/dashboard-data.json`), WiFi creds (SDK store) |
 | Settings persistence across a sketch flash | EEPROM and LittleFS both survive `write-flash` of the sketch region |
@@ -132,6 +132,23 @@ Auto rotate with Clock + Status ticked and Weather ticked-but-empty: cycles Cloc
 | steady state | 18,568 | +152 |
 
 Build: flash 893,839 B (85.6%), static RAM 54,044 B (66.0%). The `Button initialized on GPIO4` line is gone from the boot log; GPIO4 is now unused. mDNS/ArduinoOTA are still deferred (19 KB < the 28,000 B gate) — lower it in commit B.
+
+## NTP — one server was not enough (fixed 2026-09-17)
+Symptom: the clock showed `Waiting for time` for ~15 minutes after a power cycle (`hasTimeSync()` = `dashboardCurrentEpoch() != 0`, i.e. `time(nullptr)` below the year-2000 floor).
+
+Cause: upstream called `configTime(gmtOffset, 0, "pool.ntp.org")` with that **single** server. When the first SNTP request goes unanswered, lwIP doubles its retry delay each time (3, 6, 12, 24, 48, 96, then 180 s repeating), so recovery takes ~12-15 min. Measured on this board: epoch still 0 at 12 min, synced at ~15 min, twice.
+
+Network evidence (same LAN, from the Mac): `sntp pool.ntp.org` **timed out**, while `time.google.com` and `time.cloudflare.com` answered in <20 ms. The individual pool IPs did answer when queried directly, so the pool is flaky here rather than blocked — one lost packet at boot is enough to start the backoff spiral.
+
+Fix (commit after `238991f`):
+- `NTP_SERVER` → `NTP_SERVERS` in `src/config.h` = `"time.google.com", "time.cloudflare.com", "pool.ntp.org"`, passed to all three `configTime()` call sites (`src/main.cpp`, `src/webserver.cpp` ×2). lwIP rotates servers, so one silent server no longer stalls the clock.
+- `retryTimeSyncIfNeeded()` in `src/main.cpp` restarts SNTP once a minute while the clock is still unset, which resets the backoff. It returns immediately once `dashboardCurrentEpoch() != 0`, so there is no traffic after sync.
+
+Result: 3 of 3 cold boots synced in **20-25 s**; the retry never had to fire. Cost +248 B flash, +44 B static RAM.
+
+**Timezone:** the device shipped with `gmtOffset: 0` (UTC), so even a synced clock showed the wrong time. Set to **19800 (IST)** via the dashboard; it persists. `configTime()` here takes a fixed offset with DST 0, not a POSIX TZ string.
+
+**Probing the device clock over HTTP** (no serial needed): `POST /dashboard/data {"focus":{"remainingSeconds":1500}}` makes the device stamp `dashboardCurrentEpoch()`, then read `data.focus.updatedAtEpoch` from `/dashboard.json`. It is 0 when unsynced.
 
 ## Space budget — what to cut when flash or heap runs out (measured 2026-09-16)
 Object sizes from `xtensa-lx106-elf-size` on the esp12e build (pre-link; real savings are a bit lower, confirm with `pio run`). User decision: strip any upstream feature that is not one of our three modes.

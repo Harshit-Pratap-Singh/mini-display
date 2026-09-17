@@ -31,6 +31,7 @@ bool mdnsStarted = false;
 bool otaStarted = false;
 unsigned long bootCompletedAt = 0;
 unsigned long lastOptionalServiceLogAt = 0;
+unsigned long lastTimeSyncAttempt = 0;
 
 constexpr uint32_t kBootSuccessConfirmMs = 30000UL;
 constexpr uint32_t kClockSpriteWarmupMs = 8000UL;
@@ -38,6 +39,7 @@ constexpr uint32_t kDisplayProfileCheckMs = 15000UL;
 constexpr uint32_t kOptionalServiceWarmupMs = 1500UL;
 constexpr uint32_t kOptionalServiceMinFreeHeapBytes = 28000UL;
 constexpr uint32_t kOptionalServiceRetryLogMs = 5000UL;
+constexpr uint32_t kTimeSyncRetryMs = 60000UL;
 
 void logHeapState(const char *stage) {
     logPrintf("Free heap after %s: %u", stage, ESP.getFreeHeap());
@@ -486,10 +488,30 @@ void startTimeServices() {
         return;
     }
 
-    configTime(appSettings.gmtOffset, 0, NTP_SERVER);
+    configTime(appSettings.gmtOffset, 0, NTP_SERVERS);
     timeServicesStarted = true;
+    lastTimeSyncAttempt = millis();
     logPrint(F("Time services started"));
     logHeapState("time services init");
+}
+
+// lwIP doubles its SNTP retry delay after every unanswered request (~12 min before it tries
+// often again), so one lost packet at boot leaves the clock blank for a quarter of an hour.
+// Restarting SNTP resets that backoff; keep doing it until the clock is actually set.
+void retryTimeSyncIfNeeded() {
+    if (!timeServicesStarted || wifiFailsafeMode || WiFi.status() != WL_CONNECTED) {
+        return;
+    }
+    if (dashboardCurrentEpoch() != 0) {  // clock is set; nothing to do
+        return;
+    }
+    if (millis() - lastTimeSyncAttempt < kTimeSyncRetryMs) {
+        return;
+    }
+
+    configTime(appSettings.gmtOffset, 0, NTP_SERVERS);
+    lastTimeSyncAttempt = millis();
+    logPrint(F("NTP still unsynced; restarting SNTP"));
 }
 
 void startDeferredNetworkServices() {
@@ -884,6 +906,7 @@ void loop() {
     // Only handle OTA and mDNS if not in failsafe mode
     if (!wifiFailsafeMode && !networkActionBusy) {
         startDeferredNetworkServices();
+        retryTimeSyncIfNeeded();
         if (otaStarted) {
             ArduinoOTA.handle();
         }
