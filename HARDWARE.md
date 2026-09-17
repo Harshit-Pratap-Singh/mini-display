@@ -410,3 +410,51 @@ silently fail to render.
 If GIF is ever wanted back, the approach that costs **no** persistent heap is to explode the
 GIF into numbered 240×240 JPEGs on the PC and play them through the existing TJpg path; the
 frame rate is then bounded by JPEG decode, which was not instrumented.
+
+## TLS cost for Spotify — measured 2026-09-18 (milestone 6 groundwork)
+
+Measured with a temporary probe (`-D TLS_HEAP_PROBE=1`, since removed) making real
+connections to `api.spotify.com`, each doing a full unauthenticated
+`GET /v1/me/player/currently-playing` and reading the 401 response to completion.
+
+### The numbers that matter
+| | |
+|---|---|
+| Free DRAM before | 19,664 B |
+| Free IRAM before (second heap) | 18,904 B |
+| **DRAM per TLS connection** | **~10,150 B, independent of buffer size** |
+| **Peak DRAM during a request + response** | **10,544 B** |
+| IRAM at `setBufferSizes(1024, 512)` | 2,016 B |
+| IRAM at `setBufferSizes(16384, 512)` | 17,376 B |
+| DRAM left while talking to Spotify | ~8,600 B |
+| Flash cost of linking TLS | 616 B (BearSSL is already in the binary for the HTTPS feeds) |
+
+**CLAUDE.md was wrong** to say "the IRAM second heap cannot hold BearSSL buffers, so budget
+with DRAM numbers only" — that line has been corrected. With
+`PIO_FRAMEWORK_ARDUINO_MMU_CACHE16_IRAM48_SECHEAP_SHARED` (already in `platformio.ini`) the
+BearSSL **receive buffer is allocated from IRAM**; DRAM holds only the ~10 KB session context
+and is flat whatever buffer you ask for. Budget the two heaps separately.
+
+### Spotify does not support MFLN
+`probeMaxFragmentLength()` returns false at both 512 and 1024 for `api.spotify.com` **and**
+`accounts.spotify.com`, so records cannot be negotiated small. This is not theoretical:
+
+| `setBufferSizes` rx | Result |
+|---|---|
+| 512 | **fails**, `getLastSSLError() == 6` = `BR_ERR_TOO_LARGE` (record bigger than the buffer) |
+| 1024, 4096, 8192, 16384 | all succeed, identical DRAM cost |
+
+**Use `setBufferSizes(4096, 512)`**: comfortably clear of the 512 failure, ~5 KB of IRAM,
+and leaves IRAM headroom. 16384 works but takes 17.4 KB of an 18.9 KB IRAM heap.
+
+### Probe technique worth reusing
+- `ESP.getFreeHeap()` reports **DRAM only**. For the second heap use
+  `HeapSelectIram`/`HeapSelectDram` from `<umm_malloc/umm_heap_select.h>` around the call.
+- Sizing a class without running it: `template<int N> struct Probe; Probe<sizeof(T)> p;` —
+  the compile error prints the real number. This is how `sizeof(AnimatedGIF) == 24172` was
+  obtained.
+- **Read loops must be `while (client.connected() || client.available())`.** With
+  `Connection: close` the server closes as soon as it has answered, so `connected()` goes
+  false while the response is still buffered locally. Getting this wrong cost two probe
+  rounds: the same configuration read 637 bytes, then 26, then none, and it looked like a
+  buffer-size failure rather than a race with the close.

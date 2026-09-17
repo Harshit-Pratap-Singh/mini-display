@@ -54,7 +54,7 @@ Verification: flashing the iodn firmware (milestone 2) is the test. Black screen
 
 ## Hard constraints — read before writing code
 - **RAM is the limiting factor.** A 240×240×16-bit framebuffer is 115 KB — impossible. Draw straight to the panel: decode JPEG/GIF in blocks/lines and `pushImage()` them. No full-screen buffers, ever.
-- **TLS is expensive.** A BearSSL connection costs ~20 KB+ of heap and a 1–2 s handshake. Use `setInsecure()` (or one pinned root CA), shrink buffers with `setBufferSizes()`, never hold two TLS connections at once, and log `ESP.getFreeHeap()` on every poll.
+- **TLS costs ~10 KB of DRAM plus the receive buffer in IRAM** (measured 2026-09-18, HARDWARE.md → "TLS cost for Spotify"), not the ~20 KB once assumed. Use `setInsecure()`, `setBufferSizes(4096, 512)` — **512 fails with `BR_ERR_TOO_LARGE` because Spotify offers no MFLN** — never hold two TLS connections at once, and log both heaps on every poll.
 - **Spotify JSON is big.** Always parse with an ArduinoJson *filter* that keeps only the fields we render.
 - **Avoid heap fragmentation:** fixed static buffers instead of `String` concatenation in loops.
 - **Flash budget:** sketch ≤ ~1 MB; the rest is LittleFS for photos/GIFs/config. Keep OTA working.
@@ -97,7 +97,7 @@ lib_deps =
   bblanchon/ArduinoJson
   https://github.com/witnessmenow/spotify-api-arduino.git
 ```
-Notes: TFT_eSPI defaults ST7789 to SPI mode 3 (override with `-D TFT_SPI_MODE=SPI_MODE0` only if a real CS pin turns up). iodn already builds with `PIO_FRAMEWORK_ARDUINO_MMU_CACHE16_IRAM48_SECHEAP_SHARED`; the IRAM second heap cannot hold BearSSL buffers, so budget with DRAM (`ESP.getFreeHeap()`) numbers only.
+Notes: TFT_eSPI defaults ST7789 to SPI mode 3 (override with `-D TFT_SPI_MODE=SPI_MODE0` only if a real CS pin turns up). iodn already builds with `PIO_FRAMEWORK_ARDUINO_MMU_CACHE16_IRAM48_SECHEAP_SHARED`. **Measured 2026-09-18: the BearSSL receive buffer IS served from the IRAM second heap** — DRAM holds only the ~10 KB session context and is flat whatever `setBufferSizes()` asks for. Budget the two heaps separately; `ESP.getFreeHeap()` reports DRAM only, use `HeapSelectIram` for the other. (An earlier note here claimed IRAM could not hold these buffers; that was wrong.)
 
 ## Architecture
 When forking iodn, **keep its structure** and map the modules below onto it — this tree describes what we add or own, not a mandate to restructure. In the from-scratch fallback it is the layout.
