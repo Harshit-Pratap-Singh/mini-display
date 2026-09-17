@@ -623,6 +623,8 @@ void handleAppJson() {
     json += "\"brt\":" + String(currentBrightness) + ",";
     json += "\"img\":\"" + String(currentImage) + "\",";
     json += "\"page\":" + String(displayState.currentPage) + ",";
+    json += "\"photo\":\"" + String(displayCurrentPhotoPath()) + "\",";
+    json += "\"heap\":" + String(ESP.getFreeHeap()) + ",";
     json += "\"gmtOffset\":" + String(appSettings.gmtOffset) + ",";
     json += "\"displayDraft\":" + String(displayHasDraftChanges() ? "true" : "false") + ",";
     json += "\"networkBusy\":" + String(webserverHasPendingNetworkAction() ? "true" : "false");
@@ -1020,6 +1022,7 @@ void handleFileUpload() {
     } else if (upload.status == UPLOAD_FILE_END) {
         if (uploadFile) {
             uploadFile.close();
+            displayInvalidatePhotoCache();  // a new photo should join the slideshow at once
             logPrintf("INFO: Upload complete: %s (%u bytes)", uploadTargetPath, upload.totalSize);
         }
     }
@@ -1061,6 +1064,7 @@ void handleDelete() {
     if (String(currentImage) == normalizedPath) {
         clearCurrentImageSelection();
     }
+    displayInvalidatePhotoCache();  // the slideshow caches the file list
 
     sendTextResponse(200, "Deleted");
 }

@@ -1330,6 +1330,127 @@ bool homeAssistantWaitingForSync() {
     return feedsHomeAssistantConfigured() && !feedsHasHomeAssistantData();
 }
 
+// --- photo slideshow --------------------------------------------------------------
+// Scanning LittleFS is far too slow to do on every hash, and uploads are rare, so the
+// count is cached with a short TTL and invalidated outright when a file is added or
+// removed. The path for the current index is resolved only when the index moves.
+uint16_t cachedPhotoCount = 0;
+unsigned long photoCountCheckedMs = 0;
+bool photoCountValid = false;
+uint16_t photoIndex = 0;
+unsigned long lastPhotoAdvanceMs = 0;
+char currentPhotoPath[DISPLAY_PATH_BUFFER_SIZE] = {0};
+constexpr unsigned long kPhotoCountTtlMs = 5000;
+
+// IMAGE_DIR carries a trailing slash for building file paths; openDir() wants it without.
+String photoDirPath() {
+    String dir = IMAGE_DIR;
+    while (dir.length() > 1 && dir.endsWith("/")) {
+        dir.remove(dir.length() - 1);
+    }
+    return dir;
+}
+
+bool isPhotoFile(const String &name) {
+    String lower = name;
+    lower.toLowerCase();
+    return lower.endsWith(".jpg") || lower.endsWith(".jpeg");
+}
+
+uint16_t photoCount() {
+    if (photoCountValid && (millis() - photoCountCheckedMs) < kPhotoCountTtlMs) {
+        return cachedPhotoCount;
+    }
+    uint16_t count = 0;
+    Dir dir = LittleFS.openDir(photoDirPath());
+    while (dir.next()) {
+        if (dir.isFile() && isPhotoFile(dir.fileName())) {
+            ++count;
+        }
+    }
+    cachedPhotoCount = count;
+    photoCountCheckedMs = millis();
+    photoCountValid = true;
+    return count;
+}
+
+// Resolves the index-th photo into currentPhotoPath. Cheap enough at one call per
+// slideshow step; never called from the hash path.
+bool resolvePhotoPath(uint16_t index) {
+    uint16_t seen = 0;
+    Dir dir = LittleFS.openDir(photoDirPath());
+    while (dir.next()) {
+        if (!dir.isFile() || !isPhotoFile(dir.fileName())) {
+            continue;
+        }
+        if (seen == index) {
+            String full = String(IMAGE_DIR) + dir.fileName();
+            strncpy(currentPhotoPath, full.c_str(), sizeof(currentPhotoPath) - 1);
+            currentPhotoPath[sizeof(currentPhotoPath) - 1] = '\0';
+            return true;
+        }
+        ++seen;
+    }
+    currentPhotoPath[0] = '\0';
+    return false;
+}
+
+void selectPhoto(uint16_t index) {
+    photoIndex = index;
+    resolvePhotoPath(photoIndex);
+}
+
+bool hasPhotoContent() {
+    return photoCount() > 0;
+}
+
+// Runs from displayUpdate(), so it ticks at the display rate rather than needing its own
+// timer in the main loop. Only the photos page advances, and only when no single image is
+// pinned over the top of it.
+void maybeAdvancePhoto() {
+    uint16_t count = photoCount();
+
+    // Keep the index and path consistent with the filesystem on EVERY tick, whatever page
+    // is up. renderDashboardPageCached() hashes currentPhotoPath before it renders and
+    // stores that hash after, so resolving the path inside the renderer would cache a
+    // value the screen never showed and cost a second JPEG decode on the next tick.
+    if (count == 0) {
+        photoIndex = 0;
+        currentPhotoPath[0] = '\0';
+        return;
+    }
+    if (photoIndex >= count) {
+        photoIndex = 0;
+        currentPhotoPath[0] = '\0';
+    }
+    if (currentPhotoPath[0] == '\0') {
+        selectPhoto(photoIndex);
+        lastPhotoAdvanceMs = millis();
+    }
+
+    // Only the photos page steps, and not while a single image is pinned over it.
+    if (displayState.currentPage != DASHBOARD_PAGE_PHOTOS || displayState.showImage ||
+        displayState.apMode || count < 2) {
+        return;
+    }
+    unsigned long intervalMs = static_cast<unsigned long>(dashboardConfig.photoIntervalSec) * 1000UL;
+    if (millis() - lastPhotoAdvanceMs < intervalMs) {
+        return;
+    }
+    lastPhotoAdvanceMs = millis();
+
+    uint16_t next = photoIndex;
+    if (dashboardConfig.photoShuffle) {
+        // count >= 2 here, so this always terminates.
+        while (next == photoIndex) {
+            next = static_cast<uint16_t>(random(count));
+        }
+    } else {
+        next = (photoIndex + 1) % count;
+    }
+    selectPhoto(next);
+}
+
 bool hasWeatherContent() {
     const WeatherData *weather = effectiveWeatherData();
     return weather != nullptr &&
@@ -1410,6 +1531,8 @@ bool dashboardPageHasRenderableContent(uint8_t pageId) {
     switch (pageId) {
         case DASHBOARD_PAGE_CLOCK:
             return true;
+        case DASHBOARD_PAGE_PHOTOS:
+            return hasPhotoContent();
         case DASHBOARD_PAGE_MARKETS:
             return hasMarketContent() || anyMarketsWaitingForSync();
         case DASHBOARD_PAGE_HOME:
@@ -1651,6 +1774,9 @@ uint32_t dashboardStaticHash(uint8_t pageId) {
             } else if (activeClockMessage() != nullptr) {
                 hashCString(hash, activeClockMessage());
             }
+            break;
+        case DASHBOARD_PAGE_PHOTOS:
+            hashCString(hash, currentPhotoPath);
             break;
         case DASHBOARD_PAGE_MARKETS:
             hashMarketData(hash);
@@ -2347,6 +2473,30 @@ void renderClockPage() {
     updateClockDynamicArea();
 }
 
+// A photo frame gets the whole panel: no chrome, no header, nothing over the image.
+void renderPhotosPage() {
+    const ThemePalette &theme = activeTheme();
+    // maybeAdvancePhoto() runs first in displayUpdate() and owns index/path validity, so
+    // an empty path here means there is genuinely nothing to show.
+    if (currentPhotoPath[0] == '\0') {
+        drawPlaceholder("Photos", "Upload a 240x240 JPEG.");
+        return;
+    }
+
+    tft.fillScreen(theme.background);
+    if (displayRenderImage(currentPhotoPath)) {
+        return;
+    }
+
+    // Undecodable. Step past it so one bad file cannot own the slideshow; if it is the
+    // only photo there is nothing to step to, and leaving the message up is honest.
+    uint16_t count = photoCount();
+    if (count > 1) {
+        selectPhoto((photoIndex + 1) % count);
+        lastPhotoAdvanceMs = millis();
+    }
+}
+
 void renderMarketsPage() {
     const ThemePalette &theme = activeTheme();
     if (!hasMarketContent()) {
@@ -2741,6 +2891,9 @@ void renderDashboardPage() {
         case DASHBOARD_PAGE_CLOCK:
             renderClockPage();
             break;
+        case DASHBOARD_PAGE_PHOTOS:
+            renderPhotosPage();
+            break;
         case DASHBOARD_PAGE_MARKETS:
             renderMarketsPage();
             break;
@@ -2912,6 +3065,8 @@ void displayInit() {
     tft.invertDisplay(true);
     tft.fillScreen(TFT_BLACK);
 
+    // Without a seed the shuffle plays the same order after every power cycle.
+    randomSeed(micros());
     TJpgDec.setJpgScale(1);
     TJpgDec.setSwapBytes(true);
     TJpgDec.setCallback(tftOutput);
@@ -2944,6 +3099,7 @@ void displayApplyBrightness(int brightness) {
 
 void displayUpdate() {
     latchClockColonPhase();
+    maybeAdvancePhoto();
 
     if (temporaryMessageVisible()) {
         uint32_t currentHash = temporaryMessageHash();
@@ -3132,16 +3288,30 @@ void displayBlankScreen() {
     logPrint(F("Display blanked to black."));
 }
 
-void displayRenderImage(const char *path) {
+// Called by the upload and delete handlers: the photo count is cached, and waiting out
+// its TTL would make a fresh upload look like it did nothing.
+// The slideshow picks its own file, so /app.json is the only way to see which one is up.
+const char* displayCurrentPhotoPath() {
+    return currentPhotoPath;
+}
+
+void displayInvalidatePhotoCache() {
+    photoCountValid = false;
+    currentPhotoPath[0] = '\0';
+}
+
+// Returns false when the file is missing or TJpg cannot decode it, so the slideshow can
+// step past a bad photo rather than parking on its error card.
+bool displayRenderImage(const char *path) {
     if (!LittleFS.exists(path)) {
         displayShowMessage(F("Image not found"));
-        return;
+        return false;
     }
 
     File jpgFile = LittleFS.open(path, "r");
     if (!jpgFile) {
         displayShowMessage(String(F("Failed to open\n")) + path);
-        return;
+        return false;
     }
 
     tft.startWrite();
@@ -3150,8 +3320,12 @@ void displayRenderImage(const char *path) {
     jpgFile.close();
 
     if (result != JDR_OK) {
-        displayShowMessage(String(F("JPEG error\n")) + String(result));
+        // Nearly always a progressive JPEG wearing a .jpg name: TJpg_Decoder reads
+        // baseline only. tools/prepare_images.py produces the right thing.
+        displayShowMessage(String(F("Not a baseline JPEG\nerror ")) + String(result));
+        return false;
     }
+    return true;
 }
 
 void displayShowMessage(const String &msg) {

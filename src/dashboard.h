@@ -11,6 +11,7 @@
 
 enum DashboardPageId : uint8_t {
     DASHBOARD_PAGE_CLOCK = 0,
+    DASHBOARD_PAGE_PHOTOS,  // slideshow of the uploaded JPEGs in /image/
     // No weather page: every clock face already draws the weather, and we only fetch one
     // forecast day, so a separate page had nothing extra to show. Removed 2026-09-17.
     DASHBOARD_PAGE_MARKETS,
@@ -122,6 +123,8 @@ struct DashboardConfig {
     char clockMinuteColor[8];  // minutes
     char clockSecondColor[8];  // the small seconds
     uint8_t clockFace;         // DashboardClockFaceId - which clock layout to draw
+    uint16_t photoIntervalSec; // seconds each photo is held in the slideshow
+    bool photoShuffle;         // pick the next photo at random instead of in order
     bool enabledPages[DASHBOARD_PAGE_COUNT];
 };
 

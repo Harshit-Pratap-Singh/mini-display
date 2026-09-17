@@ -152,6 +152,8 @@ void setConfigDefaults() {
     copyString(dashboardConfig.clockMinuteColor, sizeof(dashboardConfig.clockMinuteColor), kDefaultClockMinuteColor);
     copyString(dashboardConfig.clockSecondColor, sizeof(dashboardConfig.clockSecondColor), kDefaultClockSecondColor);
     dashboardConfig.clockFace = DASHBOARD_CLOCK_FACE_CARDS;
+    dashboardConfig.photoIntervalSec = 15;
+    dashboardConfig.photoShuffle = false;
     dashboardConfig.enabledPages[DASHBOARD_PAGE_CLOCK] = true;  // memset above cleared the rest
 }
 
@@ -203,6 +205,7 @@ void normalizeConfig() {
     if (dashboardConfig.clockFace >= DASHBOARD_CLOCK_FACE_COUNT) {
         dashboardConfig.clockFace = DASHBOARD_CLOCK_FACE_CARDS;
     }
+    dashboardConfig.photoIntervalSec = constrain(dashboardConfig.photoIntervalSec, 3, 3600);
     ensureAtLeastOnePageEnabled();
 }
 
@@ -321,7 +324,9 @@ bool configEquals(const DashboardConfig &left, const DashboardConfig &right) {
         left.use24Hour != right.use24Hour ||
         left.showSeconds != right.showSeconds ||
         left.showIp != right.showIp ||
-        left.clockFace != right.clockFace) {
+        left.clockFace != right.clockFace ||
+        left.photoIntervalSec != right.photoIntervalSec ||
+        left.photoShuffle != right.photoShuffle) {
         return false;
     }
 
@@ -382,6 +387,8 @@ void fillConfigJson(JsonObject root) {
     clockColors["minute"] = dashboardConfig.clockMinuteColor;
     clockColors["second"] = dashboardConfig.clockSecondColor;
     root["clockFace"] = dashboardConfig.clockFace;
+    root["photoIntervalSec"] = dashboardConfig.photoIntervalSec;
+    root["photoShuffle"] = dashboardConfig.photoShuffle;
 
     JsonObject customTheme = root["customTheme"].to<JsonObject>();
     customTheme["background"] = dashboardConfig.customBackground;
@@ -406,6 +413,7 @@ void fillConfigJson(JsonObject root) {
 
     JsonObject pages = root["pages"].to<JsonObject>();
     pages["clock"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_CLOCK];
+    pages["photos"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_PHOTOS];
     pages["markets"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_MARKETS];
     pages["home"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_HOME];
     pages["focus"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_FOCUS];
@@ -478,6 +486,9 @@ void applyPagesObject(JsonObjectConst pages) {
 
     if (!pages["clock"].isNull()) {
         dashboardConfig.enabledPages[DASHBOARD_PAGE_CLOCK] = pages["clock"].as<bool>();
+    }
+    if (!pages["photos"].isNull()) {
+        dashboardConfig.enabledPages[DASHBOARD_PAGE_PHOTOS] = pages["photos"].as<bool>();
     }
     if (!pages["markets"].isNull()) {
         dashboardConfig.enabledPages[DASHBOARD_PAGE_MARKETS] = pages["markets"].as<bool>();
@@ -598,6 +609,13 @@ void applyConfigObject(JsonObjectConst root) {
         int face = root["clockFace"].as<int>();
         dashboardConfig.clockFace = static_cast<uint8_t>(
             constrain(face, 0, DASHBOARD_CLOCK_FACE_COUNT - 1));
+    }
+    if (!root["photoIntervalSec"].isNull()) {
+        dashboardConfig.photoIntervalSec =
+            static_cast<uint16_t>(constrain(root["photoIntervalSec"].as<int>(), 3, 3600));
+    }
+    if (!root["photoShuffle"].isNull()) {
+        dashboardConfig.photoShuffle = root["photoShuffle"].as<bool>();
     }
     JsonObjectConst clockColors = root["clockColors"];
     if (!clockColors.isNull()) {
@@ -1125,6 +1143,8 @@ const char* dashboardPageName(uint8_t pageId) {
     switch (pageId) {
         case DASHBOARD_PAGE_CLOCK:
             return "clock";
+        case DASHBOARD_PAGE_PHOTOS:
+            return "photos";
         case DASHBOARD_PAGE_MARKETS:
             return "markets";
         case DASHBOARD_PAGE_HOME:

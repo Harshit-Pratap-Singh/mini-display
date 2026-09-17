@@ -10,3 +10,4 @@ src/webui_gz.h
 backup/
 secrets/
 platformio.local.ini
+.venv/

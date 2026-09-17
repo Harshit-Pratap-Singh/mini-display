@@ -30,7 +30,11 @@ void displayApplyBrightness(int brightness);
 void displayUpdate();
 void displayRenderClock();
 void displayRenderAPMode();
-void displayRenderImage(const char *path);
+bool displayRenderImage(const char *path);  // false if missing or not decodable
+// Drop the cached photo count/path after an upload or delete.
+void displayInvalidatePhotoCache();
+// Path of the photo the slideshow is currently showing, or "" when there is none.
+const char* displayCurrentPhotoPath();
 void displayShowMessage(const String &msg);
 void displayShowTemporaryMessage(const String &msg, uint32_t durationMs);
 void displayShowAPScreen(const char* ssid, const char* password, const char* ip);

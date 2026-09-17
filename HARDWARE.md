@@ -318,3 +318,53 @@ The separate weather page is **gone** (`DASHBOARD_PAGE_WEATHER`, `renderWeatherP
 - **Whole hours, never minutes.** The condition line is hashed into `hashClockTimeDerivedState()`, so it drives a full `fillScreen` redraw. Minute granularity meant ~60 full redraws an hour, most of them producing identical pixels once clipped. Hour granularity ties each redraw to a visible change, and the 1-hour threshold floor keeps `0h ago` from ever rendering.
 
 Flash after milestone 4: **704,343 B (67.4%)** — smaller than milestone 3's 704,827 B, because deleting the page paid for the new marker and 484 B over.
+
+## Milestone 5 stage A — JPEG photo frame (2026-09-17, verified on hardware)
+
+`tools/prepare_images.py` (host, needs Pillow) turns any image into what the device can
+actually read, and `DASHBOARD_PAGE_PHOTOS` turns `/image/*.jpg` into a slideshow that takes
+part in page rotation like any other chip. Config: `photoIntervalSec` (default 15, clamped
+3–3600) and `photoShuffle`.
+
+### Measured on the board
+| | |
+|---|---|
+| Free heap, clock page | 18,208 B |
+| Free heap, photos page after ~30 decodes over 90 s | 18,184 B |
+| Free heap, back on the clock page | 18,200 B |
+| Flash | 706,295 B (67.6%), +2.0 KB for the slideshow |
+| Static RAM | 52,876 B (64.5%), +152 B |
+| Test photos | 240×240 baseline JPEG, 6.3–16.9 KB each from 1200×800 and 1600×900 sources |
+
+**No heap cost and no leak.** The ±72 B wobble is ordinary `String` churn. Decode still goes
+straight to the panel in blocks, so there is no image buffer — the same reason a framebuffer
+was never an option. JPEG decode time was not instrumented; the slideshow holds its interval
+and the web server stays responsive during a decode, which is all this milestone needs. fps
+matters for GIF and is stage B.
+
+### Things that bit, or would have
+- **TJpg_Decoder reads baseline JPEG only.** A progressive JPEG under a `.jpg` name passes
+  the upload's extension check and then fails to decode. `displayRenderImage()` now returns
+  `bool` so the slideshow steps past a file it cannot read instead of parking on its error
+  card; with one photo the message stays, which is honest. The message names the real cause
+  ("Not a baseline JPEG") rather than a bare `JRESULT`.
+- **The renderer must not resolve the photo path.** `renderDashboardPageCached()` samples
+  `dashboardStaticHash()` *before* rendering and stores it *after*, so a path resolved inside
+  `renderPhotosPage()` cached a hash the screen never showed and cost a second full decode on
+  the next tick. `maybeAdvancePhoto()` owns index and path validity and runs that part on
+  every tick whatever page is up; the renderer only draws.
+- **Never scan LittleFS from the hash path.** `photoCount()` caches with a 5 s TTL, and
+  upload and delete call `displayInvalidatePhotoCache()` so a new photo appears at once.
+- `Dir::fileName()` returns a **bare** name, so paths are `String(IMAGE_DIR) + fileName()`.
+  `openDir()` wants the directory **without** a trailing slash; `IMAGE_DIR` has one for
+  building file paths, hence `photoDirPath()`. `dir.next()` also returns directories, so
+  entries are filtered with `dir.isFile()`.
+- `randomSeed(micros())` in `displayInit()`, or shuffle replays the same order every boot.
+- `/app.json` gained `photo` (the slideshow's current file) and `heap`. Without the first
+  there is no way to tell from HTTP which photo is up — `img` tracks the *pinned* image, a
+  separate mechanism that still overrides every page.
+
+### Host tooling
+`pip3 install Pillow` for stills; `brew install gifsicle` for animated GIFs (stage B). Neither
+is installed on this Mac — the verification above used a throwaway venv. `--selftest` asserts
+240×240, baseline, RGB, within budget, and alpha flattened to black, with no hardware.

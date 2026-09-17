@@ -1116,6 +1116,10 @@ input[type="submit"]:disabled,
                             <input data-live type="number" id="rotationInterval" min="3" max="120">
                         </div>
                         <div class="field">
+                            <label for="photoInterval">Photo interval</label>
+                            <input data-live type="number" id="photoInterval" min="3" max="3600">
+                        </div>
+                        <div class="field">
                             <label for="clockFace">Clock face</label>
                             <select data-live id="clockFace">
                                 <option value="0">Cards - time card over a weather card</option>
@@ -1131,6 +1135,7 @@ input[type="submit"]:disabled,
                         <label class="toggle"><span>Seconds</span><input data-live type="checkbox" id="showSeconds"></label>
                         <label class="toggle"><span>Header IP</span><input data-live type="checkbox" id="showIp"></label>
                         <label class="toggle"><span>Auto rotate</span><input data-live type="checkbox" id="rotationEnabled"></label>
+                        <label class="toggle"><span>Shuffle photos</span><input data-live type="checkbox" id="photoShuffle"></label>
                     </div>
 
                     <p class="display-section-copy" style="margin-top: 14px;">Clock face colours</p>
@@ -1169,6 +1174,7 @@ input[type="submit"]:disabled,
 
                     <div class="chip-grid">
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageClock"><span>Clock</span></label>
+                        <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pagePhotos"><span>Photos</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageMarkets"><span>Markets</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageHome"><span>Home Assistant</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageFocus"><span>Focus</span></label>
@@ -1944,6 +1950,7 @@ const defaultNightCustomTheme = {
 
 const dashboardPageControls = [
     { key: "clock", id: "pageClock" },
+    { key: "photos", id: "pagePhotos" },
     { key: "markets", id: "pageMarkets" },
     { key: "home", id: "pageHome" },
     { key: "focus", id: "pageFocus" },
@@ -2615,6 +2622,8 @@ function applyDashboardState(dashboardState) {
     setChecked("showSeconds", config.showSeconds);
     setChecked("showIp", config.showIp);
     document.getElementById("clockFace").value = String(config.clockFace ?? 0);
+    setValue("photoInterval", config.photoIntervalSec ?? 15);
+    setChecked("photoShuffle", config.photoShuffle);
     applyEnabledPages(config.pages || {});
 
     const focus = data.focus || {};
@@ -2885,6 +2894,8 @@ function buildConfigPayload() {
         showSeconds: document.getElementById("showSeconds").checked,
         showIp: document.getElementById("showIp").checked,
         clockFace: readInt("clockFace", 0),
+        photoIntervalSec: readInt("photoInterval", 15),
+        photoShuffle: document.getElementById("photoShuffle").checked,
         clockColors: {
             hour: readClockColor("clockHour", "#8AB4F8"),
             minute: readClockColor("clockMinute", "#F9AB72"),
