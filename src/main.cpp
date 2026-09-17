@@ -13,13 +13,11 @@
 #include "webserver.h"
 #include "settings.h"
 #include "logger.h"
-#include "button.h"
 
 // Define NTP Client
 Settings appSettings;
 unsigned long lastDisplayUpdate = 0;
 unsigned long lastDisplayProfileCheck = 0;
-unsigned long lastPageRotation = 0;
 unsigned long lastWiFiCheck = 0;
 unsigned long lastWiFiReconnectAttempt = 0;
 bool wifiFailsafeMode = false;  // True when in AP-only mode after connection failures
@@ -733,8 +731,6 @@ void setup() {
     displaySetClockSpriteAllowed(false);
     displaySetBrightness(appSettings.brightness);  // Prime saved brightness before dashboard profile loads
 
-    buttonInit();  // Initialize GPIO button
-
     displayShowMessage(F("SmartClock\nInitializing..."));
 
     delay(2000);
@@ -829,7 +825,7 @@ void setup() {
 
     displayUpdate();
     logHeapState("initial display render");
-    lastPageRotation = millis();
+    displayState.lastPageChangeMs = millis();
 
     logPrint(F("Display updated"));
     bootCompletedAt = millis();
@@ -881,15 +877,6 @@ void loop() {
         monitorWiFi();
     }
 
-    // Handle button presses
-    ButtonPress buttonPress = buttonUpdate();
-    if (buttonPress == BUTTON_SHORT) {
-        displayCycleNextPage();
-        lastPageRotation = millis();
-    } else if (buttonPress == BUTTON_LONG) {
-        displayToggleBacklight();
-    }
-
     webserverHandle();
     webserverProcessPendingActions();
     networkActionBusy = webserverHasPendingNetworkAction();
@@ -936,9 +923,8 @@ void loop() {
         !displayState.showImage &&
         !displayState.apMode &&
         dashboardConfig.rotationEnabled &&
-        millis() - lastPageRotation > static_cast<unsigned long>(dashboardConfig.rotationIntervalSec) * 1000UL) {
+        millis() - displayState.lastPageChangeMs > static_cast<unsigned long>(dashboardConfig.rotationIntervalSec) * 1000UL) {
         displayCycleNextPage(true);
-        lastPageRotation = millis();
     }
 
     maybeEnableClockSprite();

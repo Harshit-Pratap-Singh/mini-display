@@ -39,7 +39,7 @@ Single source of truth for pins, display settings, flash layout and the base-rep
 | TFT RST | 2 | same |
 | TFT CS | none (GND) | same → SPI mode 3 |
 | Backlight PWM | 5 | same |
-| Button | — | **no user button on this hardware** (user-confirmed 2026-09-16); iodn reads GPIO4 with pull-up, harmless but unused |
+| Button | — | **no user button on this hardware** (user-confirmed 2026-09-16); iodn reads GPIO4 with pull-up (`PIN_BUTTON`, `src/config.h`) — deleted 2026-09-17 in commit A; GPIO4 is now unused |
 
 Display VERIFIED: ST7789, 240×240, no offsets, SPI mode 3 (TFT_eSPI default for ST7789; CS tied low), 40 MHz, `tft.invertDisplay(true)` in code, **default RGB order — the BGR hypothesis was wrong, do not add TFT_RGB_ORDER=TFT_BGR**.
 
@@ -62,9 +62,9 @@ Display VERIFIED: ST7789, 240×240, no offsets, SPI mode 3 (TFT_eSPI default for
 - **Flashed 2026-09-16** after `erase-flash`: `pio run -e esp12e -t upload` at 115200, 896,720 B written (546,750 compressed) in 53 s, hash verified.
 
 ## First boot of iodn firmware (esp12e, 2026-09-16) — serial log facts
-- Boots normally; "Display init complete"; button initialised on GPIO4 (INPUT_PULLUP); LittleFS mounts and `/image/` is cleared.
+- Boots normally; "Display init complete"; button initialised on GPIO4 (INPUT_PULLUP); LittleFS mounts and `/image/` is "cleared" — but `clearImageDirectory()` (`src/main.cpp:568-582`) passes the bare `dir.fileName()` to `LittleFS.remove()`, which targets the root, so uploaded images most likely survive reboots (static analysis 2026-09-17; confirm on hardware: expect `Failed to delete: <name>` in the boot log).
 - No saved WiFi → failsafe AP `SmartClock-Setup`, 8-digit password regenerated every boot (read it from the display or serial), IP 192.168.4.1. Admin password for the dashboard is a generated 10-digit number, also shown on display/serial.
-- Boot-failure counter: opening the serial port resets the board (DTR/RTS auto-reset). Two resets during early boot put it into "recovery mode" once; the counter clears after any complete boot. Harmless, but don't spam the port during boot.
+- Boot-failure counter: opening the serial port resets the board (DTR/RTS auto-reset). Two resets before the counter clears put it into "recovery mode" once (`BOOT_RECOVERY_THRESHOLD 2`, `src/settings.cpp`); the counter clears only **30 s after `setup()` completes** (`kBootSuccessConfirmMs`, `src/main.cpp`) and any reset type counts, so an upload auto-reset followed by opening the monitor within ~40 s yields one recovery boot. Recovery disables NTP/mDNS/OTA/feeds but not the web UI or `/update`. Five resets within 10 s of power-on trigger a factory reset (`POWER_CYCLE_THRESHOLD 5`). Wait >40 s after `Ready!` before opening the port.
 
 | Free heap (`ESP.getFreeHeap()`, DRAM only; IRAM second heap not counted) | Bytes |
 |---|---|
@@ -73,8 +73,65 @@ Display VERIFIED: ST7789, 240×240, no offsets, SPI mode 3 (TFT_eSPI default for
 | after WiFi setup (softAP mode) | 21,520 |
 | after web server init | 17,296 |
 
-- **RAM is tighter than CLAUDE.md's 40–50 KB estimate.** A BearSSL session (~20 KB) does not fit in this headroom as-is; milestone 6 will need trimming (fonts, page HTML, feeds we don't use) and/or the IRAM second heap. Measure in STA mode too (softAP costs extra).
-- Visual check (user, 2026-09-16): setup screen readable, colours correct, backlight on → SCLK 14 / MOSI 13 / DC 0 / RST 2 / no CS / BL 5 verified. **No user button exists**, so CLAUDE.md’s button-driven mode switching needs a replacement (web UI, auto mode, timed cycle).
+- **RAM is tighter than CLAUDE.md's 40–50 KB estimate.** A BearSSL session (~20 KB) does not fit in this headroom as-is; milestone 6 will need trimming (fonts, page HTML, feeds we don't use) and/or the IRAM second heap. STA-mode numbers below.
+
+## STA mode heap — measured 2026-09-17 (same esp12e build, saved home-WiFi credentials, DHCP IP 192.168.1.14)
+Serial boot log, `ESP.getFreeHeap()` (DRAM only):
+
+| Free heap, STA mode | Bytes |
+|---|---|
+| after display init | 24,504 |
+| after FS/auth/dashboard/feeds init | 24,288 |
+| after WiFi connected (STA, 1 attempt) | 23,144 |
+| after web server init | 18,920 |
+| after initial display render / time services | 18,920 |
+| steady state after the ~60 s boot-stability window | 18,416 |
+
+- STA saves only ~1.6 KB over softAP (18,920 vs 17,296 after web server init).
+- Consequences visible in the log: mDNS **and ArduinoOTA** are deferred indefinitely (`Deferring mDNS, free heap too low: 18416`; gate `kOptionalServiceMinFreeHeapBytes = 28000`, `src/main.cpp:41`), and the clock page's sprite is skipped (`Clock sprite skipped, free heap too low: 18392`; gate `kClockSpriteMinFreeHeapBytes = 30000`, `src/display.cpp:44`). The firmware is already running in its own low-memory fallbacks on this board; only web `/update` OTA is testable until the gate is lowered after the strip.
+- `GET /` (dashboard shell, no auth) is 139,092 B — the single biggest flash item after the libraries; strip-list sections and/or gzip are the lever.
+- Boot-log capture without `pio device monitor`: `tools/bootlog.py [port] [seconds]` (pyserial, esptool-style hard reset = DTR off + RTS pulse, prints to stdout). Run it with Homebrew's esptool venv Python, which has pyserial: `/opt/homebrew/Cellar/esptool/5.4.0/libexec/bin/python tools/bootlog.py /dev/cu.usbserial-10 60`. One reset is safe once the counter has cleared (`Boot stability confirmed`, ~30 s after setup).
+- Visual check (user, 2026-09-16): setup screen readable, colours correct, backlight on → SCLK 14 / MOSI 13 / DC 0 / RST 2 / no CS / BL 5 verified. **No user button exists**; mode switching is web-driven since commit A (CLAUDE.md Mode logic: page chips + `POST /page`).
+
+## Milestone 3 — commit A verified on hardware 2026-09-17
+Firmware: our build with the button removed and `POST /page` added. Flashed over USB at 115200 (897,984 B, hash verified). The web `/update` OTA path was **not** exercised — still untested on this board.
+
+Baseline checks on the pre-commit-A build (STA, 192.168.1.14):
+
+| Check | Result |
+|---|---|
+| WiFi from saved credentials | connects on attempt 1, DHCP 192.168.1.14 |
+| NTP | **working** — device epoch matched the PC to the second (probed over HTTP: `POST /dashboard/data {"focus":{"remainingSeconds":N}}` makes the device stamp `dashboardCurrentEpoch()`, then read `data.focus.updatedAtEpoch` from `/dashboard.json`; it returns 0 when unsynced) |
+| Timezone | was `gmtOffset: 0` (UTC) out of the box → **set to 19800 (IST)**; `configTime(gmtOffset, 0, "pool.ntp.org")`, fixed offset, no DST |
+| Settings persistence across reboot | **all survived**: brightness + gmtOffset (EEPROM), rotation interval + page toggles (`/dashboard-config.json`), widget data (`/dashboard-data.json`), WiFi creds (SDK store) |
+| Settings persistence across a sketch flash | EEPROM and LittleFS both survive `write-flash` of the sketch region |
+| LittleFS | 2,072,576 B total, 2,023,424 B free empty → the `eagle.flash.4m2m.ld` 2 MB layout is live |
+| Image upload | `POST /image/upload` (multipart, field `file`) works; a 14,819 B JPEG consumed 32,768 B of FS |
+| `/image/*` wiped at boot? | **No — images survive reboots.** Confirmed on hardware: free space was identical before and after a reboot with an image present. `clearImageDirectory()` (`src/main.cpp`) passes the bare `dir.fileName()` to `LittleFS.remove()`, which targets the root. Fix before milestone 5. |
+| `POST /delete` | takes `{"file":"/image/x.jpg"}` (not `path`) |
+
+`POST /page` contract, verified with Clock-only config:
+
+| Request | Response |
+|---|---|
+| `?id=0` (Clock, ticked, has content) | 200 |
+| `?id=1` (Weather ticked but feed disabled → no content) | 409 |
+| `?id=7` (Quote, unticked) | 409 |
+| `?id=9` (out of range) | 400 |
+| `?id=abc`, `?id=` | 400 |
+| no `id` (advance) | 200 |
+
+Auto rotate with Clock + Status ticked and Weather ticked-but-empty: cycles Clock ↔ Status every 3 s and **skips Weather**, i.e. the renderer's content-availability gate and the `/page` gate agree. `/app.json` reports the live page.
+
+| Free heap, STA, after commit A | Bytes | Δ vs before |
+|---|---|---|
+| after display init | 24,656 | +152 |
+| after FS/auth/dashboard/feeds init | 24,440 | +152 |
+| after WiFi connected | 23,296 | +152 |
+| after web server init | 19,072 | +152 |
+| steady state | 18,568 | +152 |
+
+Build: flash 893,839 B (85.6%), static RAM 54,044 B (66.0%). The `Button initialized on GPIO4` line is gone from the boot log; GPIO4 is now unused. mDNS/ArduinoOTA are still deferred (19 KB < the 28,000 B gate) — lower it in commit B.
 
 ## Space budget — what to cut when flash or heap runs out (measured 2026-09-16)
 Object sizes from `xtensa-lx106-elf-size` on the esp12e build (pre-link; real savings are a bit lower, confirm with `pio run`). User decision: strip any upstream feature that is not one of our three modes.

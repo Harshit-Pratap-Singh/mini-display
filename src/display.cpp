@@ -116,9 +116,7 @@ const ThemePalette kThemes[DASHBOARD_THEME_COUNT] = {
     },
 };
 
-int savedBrightness = 100;
 int appliedBrightness = -1;
-bool backlightOn = true;
 
 enum DisplayRenderMode : uint8_t {
     DISPLAY_MODE_DASHBOARD = 0,
@@ -2076,14 +2074,9 @@ void renderDashboardPageCached() {
 
 }  // namespace
 
-void setBacklightLevel(int brightness, bool rememberPreference, bool shouldLog = true) {
+void setBacklightLevel(int brightness, bool shouldLog = true) {
     int boundedBrightness = constrain(brightness, 0, 100);
-    if (rememberPreference) {
-        savedBrightness = boundedBrightness;
-    }
-
     if (appliedBrightness == boundedBrightness) {
-        backlightOn = boundedBrightness > 0;
         return;
     }
 
@@ -2098,7 +2091,6 @@ void setBacklightLevel(int brightness, bool rememberPreference, bool shouldLog =
 
     analogWrite(PIN_BACKLIGHT, pwmValue);
     appliedBrightness = boundedBrightness;
-    backlightOn = boundedBrightness > 0;
     if (shouldLog) {
         logPrintf("Brightness: %d%%, PWM: %d", boundedBrightness, pwmValue);
     }
@@ -2109,7 +2101,7 @@ void animateBacklightRamp(int fromBrightness,
                           uint8_t steps,
                           uint16_t stepDelayMs) {
     if (steps == 0) {
-        setBacklightLevel(toBrightness, false, false);
+        setBacklightLevel(toBrightness, false);
         return;
     }
 
@@ -2121,7 +2113,7 @@ void animateBacklightRamp(int fromBrightness,
 
     for (uint8_t step = 1; step <= steps; ++step) {
         int interpolated = start + ((target - start) * static_cast<int>(step)) / static_cast<int>(steps);
-        setBacklightLevel(interpolated, false, false);
+        setBacklightLevel(interpolated, false);
         if (stepDelayMs > 0) {
             delay(stepDelayMs);
             yield();
@@ -2199,11 +2191,11 @@ void displayInit() {
 }
 
 void displaySetBrightness(int brightness) {
-    setBacklightLevel(brightness, true);
+    setBacklightLevel(brightness);
 }
 
 void displayApplyBrightness(int brightness) {
-    setBacklightLevel(brightness, false);
+    setBacklightLevel(brightness);
 }
 
 void displaySetClockSpriteAllowed(bool allowed) {
@@ -2496,55 +2488,48 @@ void displayShowAPScreen(const char *ssid, const char *password, const char *ip)
     displayUpdate();
 }
 
-void displayCycleNextPage(bool smoothTransition) {
+bool displaySetPage(uint8_t page, bool smoothTransition) {
     if (temporaryMessageVisible()) {
-        logPrint(F("Page cycling disabled while temporary message is active"));
-        return;
+        logPrint(F("Page change ignored while temporary message is active"));
+        return false;
     }
 
     if (displayState.apMode) {
-        logPrint(F("Page cycling disabled in AP mode"));
-        return;
+        logPrint(F("Page change ignored in AP mode"));
+        return false;
     }
 
-    if (displayState.showImage) {
-        displayState.showImage = false;
-        displayState.currentPage = firstAvailableDashboardPage();
-        invalidateRenderCache();
-        displayUpdate();
-        return;
+    // Same gate as the renderer: an enabled page with nothing to draw would be evicted within 1 s anyway.
+    if (page >= DASHBOARD_PAGE_COUNT || !dashboardPageAvailable(page)) {
+        return false;
     }
 
-    uint8_t previousPage = displayState.currentPage;
-    if (!dashboardPageAvailable(displayState.currentPage)) {
-        displayState.currentPage = firstAvailableDashboardPage();
-    } else {
-        displayState.currentPage = nextAvailableDashboardPage(displayState.currentPage);
+    bool leavingImage = displayState.showImage;
+    displayState.showImage = false;
+    displayState.lastPageChangeMs = millis();
+    if (!leavingImage && page == displayState.currentPage) {
+        return true;
     }
 
-    if (displayState.currentPage == previousPage) {
-        return;
-    }
+    displayState.currentPage = page;
 
+    // No fade when coming back from an image: the old behaviour redrew immediately.
+    bool fade = smoothTransition && !leavingImage;
     int targetBrightness = appliedBrightness;
-    int transitionBrightness = targetBrightness;
-    if (smoothTransition) {
-        transitionBrightness = beginPageTransition(targetBrightness);
-    }
+    int transitionBrightness = fade ? beginPageTransition(targetBrightness) : targetBrightness;
 
     invalidateRenderCache();
     displayUpdate();
-    if (smoothTransition) {
+    if (fade) {
         endPageTransition(transitionBrightness, targetBrightness);
     }
+    return true;
 }
 
-void displayToggleBacklight() {
-    if (backlightOn) {
-        logPrint(F("Backlight OFF"));
-        displayApplyBrightness(0);
-    } else {
-        logPrintf("Backlight ON (brightness: %d)", savedBrightness);
-        displayApplyBrightness(savedBrightness > 0 ? savedBrightness : 100);
-    }
+bool displayCycleNextPage(bool smoothTransition) {
+    displayState.lastPageChangeMs = millis();  // restart the rotation timer even if the change is refused
+    uint8_t next = (displayState.showImage || !dashboardPageAvailable(displayState.currentPage))
+                       ? firstAvailableDashboardPage()
+                       : nextAvailableDashboardPage(displayState.currentPage);
+    return displaySetPage(next, smoothTransition);
 }

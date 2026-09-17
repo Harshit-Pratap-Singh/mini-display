@@ -616,6 +616,7 @@ void handleAppJson() {
     json += "\"theme\":" + String(currentTheme) + ",";
     json += "\"brt\":" + String(currentBrightness) + ",";
     json += "\"img\":\"" + String(currentImage) + "\",";
+    json += "\"page\":" + String(displayState.currentPage) + ",";
     json += "\"gmtOffset\":" + String(appSettings.gmtOffset) + ",";
     json += "\"displayDraft\":" + String(displayHasDraftChanges() ? "true" : "false") + ",";
     json += "\"networkBusy\":" + String(webserverHasPendingNetworkAction() ? "true" : "false");
@@ -1100,12 +1101,31 @@ void handleApiUpdate() {
     sendTextResponse(200, "OK");
 }
 
-void handleTestCard() {
-    clearCurrentImageSelection();
-    displayState.apMode = false;
-    displayState.line2[0] = '\0';
-    displayState.currentPage = DASHBOARD_PAGE_CLOCK;
-    displayUpdate();
+// POST /page?id=N shows page N now; POST /page advances to the next available page.
+// This replaces the physical button (this board has none).
+void handlePage() {
+    bool changed = false;
+    if (server.hasArg("id")) {
+        const String &arg = server.arg("id");
+        char *end = nullptr;
+        long pageId = strtol(arg.c_str(), &end, 10);
+        if (arg.length() == 0 || *end != '\0' || pageId < 0 || pageId >= DASHBOARD_PAGE_COUNT) {
+            sendTextResponse(400, "Bad page");
+            return;
+        }
+        changed = displaySetPage(static_cast<uint8_t>(pageId));
+    } else {
+        changed = displayCycleNextPage();
+    }
+
+    if (!changed) {
+        sendTextResponse(409, "Page unavailable");  // AP screen, temporary message, or page disabled/empty
+        return;
+    }
+
+    // The display already left the image (showImage=false); drop the web-side selection too.
+    currentImage[0] = '\0';
+    displayState.imagePath[0] = '\0';
     sendTextResponse(200, "OK");
 }
 
@@ -1246,7 +1266,7 @@ void webserverInit() {
     registerProtectedRoute("/factoryreset", HTTP_POST, handleFactoryReset);
     registerProtectedRoute("/scan", HTTP_GET, handleWiFiScan);
     registerProtectedRoute("/connect", HTTP_POST, handleWiFiConnect);
-    registerProtectedRoute("/test", HTTP_POST, handleTestCard);
+    registerProtectedRoute("/page", HTTP_POST, handlePage);
     registerProtectedRoute("/image/show", HTTP_POST, handleImageShow);
     registerProtectedRoute("/dashboard/config", HTTP_POST, handleDashboardConfigSave);
     registerProtectedRoute("/dashboard/data", HTTP_POST, handleDashboardDataSave);

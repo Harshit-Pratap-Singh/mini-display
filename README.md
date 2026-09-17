@@ -36,7 +36,7 @@ Target hardware:
 - ST7789 240x240 TFT display
 - 4 MB flash recommended
 
-Display and button pin mapping:
+Display pin mapping:
 
 | Function | ESP8266 GPIO |
 |----------|--------------|
@@ -45,11 +45,10 @@ Display and button pin mapping:
 | DC | GPIO0 |
 | RST | GPIO2 |
 | Backlight PWM | GPIO5 |
-| Button | GPIO4 |
 
 The active build flags are defined in `platformio.ini`.
 
-The button on GPIO4 cycles to the next display page with a short press and toggles the backlight with a long press.
+This board has no user button. Pages are switched from the dashboard ("Show now" in Visible on Device) or with `POST /page`; Auto rotate cycles the ticked pages on a timer.
 
 ## Important Notes
 
@@ -207,7 +206,7 @@ Dashboard areas:
 - Home Asst: Home Assistant REST feed settings and entity slots
 - Widgets: focus timer, world clocks, event countdown, quote, and status lines
 - Network: WiFi scan, network join, and captive portal restart
-- System: image upload, OTA update, logs, storage status, password rotation, test card, and factory reset
+- System: image upload, OTA update, logs, storage status, password rotation, show page, and factory reset
 
 Most display changes can be previewed before saving.
 
@@ -366,7 +365,7 @@ Protected network and system endpoints:
 | POST | `/connect` | Connect to WiFi network |
 | POST | `/reconfigurewifi` | Clear WiFi credentials and restart to setup mode |
 | POST | `/factoryreset` | Factory reset and restart |
-| POST | `/test` | Show test card |
+| POST | `/page` | `?id=N` shows page N now; without `id` advances to the next page (400 bad id, 409 if the page is not enabled or the AP/temporary-message screen is up) |
 | GET | `/update` | OTA upload form |
 | POST | `/update` | OTA firmware upload |
 | POST | `/auth/password` | Change admin password |
@@ -431,7 +430,6 @@ Main modules:
 | `dashboard.cpp` | Display configuration, widget data, live preview, persistence |
 | `feeds.cpp` | Weather, market, and Home Assistant feed configuration and polling |
 | `display.cpp` | ST7789 rendering, pages, brightness, images, setup screens |
-| `button.cpp` | Button debounce and short/long press handling |
 | `logger.cpp` | Serial and in-memory logs |
 
 The ESP8266 runtime is cooperative. Long operations should yield, avoid large allocations, and avoid excessive filesystem writes.

@@ -1126,7 +1126,7 @@ input[type="submit"]:disabled,
                     <div class="display-section-header">
                         <div>
                             <h3 class="display-section-title">Visible on Device</h3>
-                            <p class="display-section-copy">Choose which pages can rotate on screen.</p>
+                            <p class="display-section-copy">Tick the pages the device may show: one page = fixed mode, several + Auto rotate = timed cycle. Show now switches immediately.</p>
                         </div>
                     </div>
 
@@ -1140,6 +1140,13 @@ input[type="submit"]:disabled,
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageEvent"><span>Event</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageQuote"><span>Quote</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageStatus"><span>Status</span></label>
+                    </div>
+                    <div class="field" style="margin-top: 14px;">
+                        <label for="showNowPage">Show now</label>
+                        <select id="showNowPage"></select>
+                    </div>
+                    <div class="button-row" style="margin-top: 14px;">
+                        <button type="button" class="ghost" onclick="showPage(document.getElementById('showNowPage').value)">Show now</button>
                     </div>
                 </section>
 
@@ -1760,7 +1767,7 @@ input[type="submit"]:disabled,
                 </div>
                 <div class="button-row" style="margin-top: 14px;">
                     <button type="button" class="ghost" onclick="displayImage()">Show</button>
-                    <button type="button" class="ghost" onclick="previewTestCard()">Dashboard</button>
+                    <button type="button" class="ghost" onclick="showPage()">Dashboard</button>
                 </div>
             </section>
 
@@ -1913,6 +1920,7 @@ const dashboardPageControls = [
 
 let hydrating = false;
 let dirty = false;
+let devicePage = 0;  // page the device reported in /app.json at load time
 let liveTimer = 0;
 let livePromise = Promise.resolve();
 let feedDirty = false;
@@ -2249,6 +2257,27 @@ function applyEnabledPages(pages = {}) {
         setChecked(id, enabled);
     });
     ensurePageSelection();
+    refreshShowNowOptions();
+}
+
+function refreshShowNowOptions() {
+    const select = document.getElementById("showNowPage");
+    const previous = select.value;
+    select.innerHTML = "";
+    dashboardPageControls.forEach(({ id }, index) => {
+        const input = document.getElementById(id);
+        if (!input.checked) {
+            return;
+        }
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = input.parentElement.querySelector("span").textContent;
+        select.appendChild(option);
+    });
+    const wanted = [previous, String(devicePage)].find((value) => select.querySelector(`option[value="${value}"]`));
+    if (wanted !== undefined) {
+        select.value = wanted;
+    }
 }
 
 function readEnabledPages() {
@@ -2505,6 +2534,7 @@ function applyAppState(appState) {
     setValue("deviceName", appState.deviceName ?? appState.defaultDeviceName ?? "");
     setValue("brightness", appState.brt ?? 70);
     setValue("imagePath", appState.img ?? "");
+    devicePage = Number.isInteger(appState.page) ? appState.page : 0;
     applyTimezoneToUI(typeof appState.gmtOffset === "number" ? appState.gmtOffset : 0);
     updateBrightnessLabel();
     updateDeviceIdentityPreview();
@@ -3266,17 +3296,22 @@ function displayImage() {
         });
 }
 
-function previewTestCard() {
-    request("/test", { method: "POST" })
+function showPage(id) {
+    const query = id === undefined ? "" : `?id=${encodeURIComponent(id)}`;
+    flushLiveSync()  // a just-ticked chip must reach the device before it can be shown
+        .then(() => request(`/page${query}`, { method: "POST" }))
         .then((response) => {
             if (!response.ok) {
-                throw new Error("Test failed");
+                throw new Error("Page unavailable");
             }
-            setSyncState("Preview", "live");
+            if (id !== undefined) {
+                devicePage = Number(id);
+            }
+            setSyncState("Shown", "live");
         })
         .catch((error) => {
             console.error(error);
-            setSyncState("Test failed", "error");
+            setSyncState("Page failed", "error");
         });
 }
 
@@ -3683,6 +3718,7 @@ document.addEventListener("change", (event) => {
 
     if (event.target.matches("[data-page-toggle]")) {
         ensurePageSelection(event.target.id);
+        refreshShowNowOptions();
         scheduleLiveSync(90);
         return;
     }

@@ -33,12 +33,6 @@ uint16_t normalizeMinutesOfDay(int value) {
     return static_cast<uint16_t>(normalized);
 }
 
-void enableAllPages() {
-    for (uint8_t page = 0; page < DASHBOARD_PAGE_COUNT; ++page) {
-        dashboardConfig.enabledPages[page] = true;
-    }
-}
-
 bool anyPageEnabled() {
     for (uint8_t page = 0; page < DASHBOARD_PAGE_COUNT; ++page) {
         if (dashboardConfig.enabledPages[page]) {
@@ -146,12 +140,12 @@ void setConfigDefaults() {
     copyString(dashboardConfig.nightCustomText,
                sizeof(dashboardConfig.nightCustomText),
                kDefaultNightCustomText);
-    dashboardConfig.rotationEnabled = true;
+    dashboardConfig.rotationEnabled = false;  // a fresh device is a still clock; tick more chips + Auto rotate to cycle
     dashboardConfig.rotationIntervalSec = 10;
     dashboardConfig.use24Hour = true;
     dashboardConfig.showSeconds = false;
     dashboardConfig.showIp = false;
-    enableAllPages();
+    dashboardConfig.enabledPages[DASHBOARD_PAGE_CLOCK] = true;  // memset above cleared the rest
 }
 
 void setDataDefaults() {

@@ -21,6 +21,7 @@ struct DisplayState {
     char apSSID[DISPLAY_SSID_BUFFER_SIZE];      // AP mode SSID to display
     char apPassword[DISPLAY_PASS_BUFFER_SIZE];  // AP mode password to display
     uint8_t currentPage;                       // Active dashboard page
+    unsigned long lastPageChangeMs;            // millis() of the last page change; drives the rotation timer
 };
 
 void displayInit();
@@ -37,8 +38,10 @@ void displayShowMessage(const String &msg);
 void displayShowTemporaryMessage(const String &msg, uint32_t durationMs);
 void displayShowAPScreen(const char* ssid, const char* password, const char* ip);
 void displayBlankScreen();
-void displayCycleNextPage(bool smoothTransition = false);
-void displayToggleBacklight();
+// Preferred way to change currentPage (render fallbacks and config-save handlers still assign it directly).
+// Refuses (false) in AP mode, while a temporary message is up, or if the page is not enabled/has no content.
+bool displaySetPage(uint8_t page, bool smoothTransition = false);
+bool displayCycleNextPage(bool smoothTransition = false);
 
 extern DisplayState displayState;
 extern TFT_eSPI tft;
