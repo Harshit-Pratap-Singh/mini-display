@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Prepare photos and GIFs for the 240x240 display.
+"""Prepare photos for the 240x240 display.
 
-The device decodes JPEG with TJpg_Decoder, which cannot read progressive JPEG, and
-plays GIFs with AnimatedGIF. Both want small files: there is no framebuffer, so a
-frame is decoded in blocks straight to the panel, and LittleFS only has ~2 MB.
+Everything becomes a 240x240 baseline JPEG, centre-cropped so nothing is letterboxed.
+The device decodes with TJpg_Decoder, which cannot read progressive JPEG - the usual
+reason a photo silently fails to appear - and there is no framebuffer, so a frame is
+decoded in blocks straight to the panel.
 
     ./prepare_images.py holiday/*.jpg -o out/
-    ./prepare_images.py cat.gif -o out/
     ./prepare_images.py --selftest
 
-Stills become 240x240 baseline JPEG, centre-cropped so nothing is letterboxed.
-Animated GIFs are handed to gifsicle (brew install gifsicle); everything else,
-including single-frame GIFs, goes down the JPEG path.
+Animated GIFs are NOT supported: AnimatedGIF's decoder is 24,172 B against ~18 KB of
+free heap on this board, so the firmware only accepts .jpg/.jpeg uploads. See
+HARDWARE.md, "Milestone 5 stage B". Convert a GIF to stills yourself if you want a
+frame from it.
 
 Upload the results from the device's dashboard.
 """
@@ -19,8 +20,6 @@ Upload the results from the device's dashboard.
 from __future__ import annotations
 
 import argparse
-import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -28,29 +27,19 @@ from pathlib import Path
 SIZE = 240
 # Comfortably inside a 2 MB filesystem while leaving room for a slideshow's worth.
 DEFAULT_MAX_JPEG_BYTES = 45_000
-DEFAULT_MAX_GIF_BYTES = 300_000
 DEFAULT_QUALITY = 80
 MIN_QUALITY = 40
-DEFAULT_GIF_COLORS = 64
 
-STILL_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".heic"}
+STILL_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".gif"}
 
 
 def _pil():
-    """Import Pillow late so --help and the GIF path work without it installed."""
+    """Import Pillow late so --help still works without it installed."""
     try:
         from PIL import Image, ImageOps
     except ImportError:  # pragma: no cover - depends on the host
         sys.exit("Pillow is required for still images: pip install Pillow")
     return Image, ImageOps
-
-
-def is_animated_gif(path: Path) -> bool:
-    if path.suffix.lower() != ".gif":
-        return False
-    Image, _ = _pil()
-    with Image.open(path) as image:
-        return getattr(image, "n_frames", 1) > 1
 
 
 def prepare_still(source: Path, target: Path, max_bytes: int, quality: int) -> int:
@@ -80,31 +69,8 @@ def prepare_still(source: Path, target: Path, max_bytes: int, quality: int) -> i
         return target.stat().st_size
 
 
-def prepare_gif(source: Path, target: Path, max_bytes: int, colors: int) -> int:
-    """Shrink an animated GIF with gifsicle. Returns bytes."""
-    if shutil.which("gifsicle") is None:
-        sys.exit("gifsicle is required for animated GIFs: brew install gifsicle")
-
-    for attempt_colors in (colors, 32, 16):
-        subprocess.run(
-            ["gifsicle", "--resize-fit", f"{SIZE}x{SIZE}",
-             "--colors", str(attempt_colors), "-O3", str(source), "-o", str(target)],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-        size = target.stat().st_size
-        if size <= max_bytes:
-            return size
-    return target.stat().st_size
-
-
 def process(source: Path, out_dir: Path, args) -> tuple[Path, int, bool]:
-    """Returns (target, size, over_budget)."""
-    if is_animated_gif(source):
-        target = out_dir / f"{source.stem}.gif"
-        size = prepare_gif(source, target, args.max_gif_bytes, args.colors)
-        return target, size, size > args.max_gif_bytes
-
+    """Returns (target, size, over_budget). An animated GIF yields its first frame."""
     target = out_dir / f"{source.stem}.jpg"
     size = prepare_still(source, target, args.max_jpeg_bytes, args.quality)
     return target, size, size > args.max_jpeg_bytes
@@ -149,10 +115,7 @@ def main() -> int:
                         help="output directory (default: ./prepared)")
     parser.add_argument("--quality", type=int, default=DEFAULT_QUALITY,
                         help=f"starting JPEG quality (default: {DEFAULT_QUALITY})")
-    parser.add_argument("--colors", type=int, default=DEFAULT_GIF_COLORS,
-                        help=f"starting GIF palette size (default: {DEFAULT_GIF_COLORS})")
     parser.add_argument("--max-jpeg-bytes", type=int, default=DEFAULT_MAX_JPEG_BYTES)
-    parser.add_argument("--max-gif-bytes", type=int, default=DEFAULT_MAX_GIF_BYTES)
     parser.add_argument("--selftest", action="store_true", help="run the built-in check and exit")
     args = parser.parse_args()
 
@@ -168,7 +131,7 @@ def main() -> int:
         if not source.is_file():
             print(f"  skip {source}: not a file", file=sys.stderr)
             continue
-        if source.suffix.lower() not in STILL_SUFFIXES and source.suffix.lower() != ".gif":
+        if source.suffix.lower() not in STILL_SUFFIXES:
             print(f"  skip {source}: unsupported type", file=sys.stderr)
             continue
 
@@ -182,7 +145,7 @@ def main() -> int:
     print(f"\n{total / 1024:.0f} KB total in {args.out}/")
     if over:
         print(f"{over} file(s) above budget - they will still upload, but they eat "
-              f"into the ~2 MB filesystem and GIFs above ~300 KB stutter.", file=sys.stderr)
+              f"into the ~2 MB filesystem.", file=sys.stderr)
     return 0
 
 

@@ -368,3 +368,45 @@ matters for GIF and is stage B.
 `pip3 install Pillow` for stills; `brew install gifsicle` for animated GIFs (stage B). Neither
 is installed on this Mac — the verification above used a throwaway venv. `--selftest` asserts
 240×240, baseline, RGB, within budget, and alpha flattened to black, with no hardware.
+
+## Milestone 5 stage B — animated GIF: measured, does not fit, dropped (2026-09-17)
+
+`bitbank2/AnimatedGIF` holds its decoder struct **by value** (`GIFIMAGE _gif` inside class
+`AnimatedGIF`). Measured by compiling it against this project:
+
+```
+template<int N> struct Probe;
+Probe<sizeof(AnimatedGIF)> probe;   // error reveals: Probe<24172>
+```
+
+**24,172 B**, against **18,208 B** of free heap. It does not fit either way:
+
+| Placement | Outcome |
+|---|---|
+| Heap (`new`/`malloc`) | fails — 24.2 KB requested from an 18.2 KB heap |
+| Static / BSS | static RAM would go 52,892 → 77,064 of 81,920, leaving under 5 KB for heap **and** stack. Will not boot. |
+
+Almost all of it is the LZW dictionary, which scales with `MAX_CODE_SIZE` (12 by default):
+`ucFileBuf[1<<CS]` + `usGIFTable[1<<CS]×2` + `ucGIFPixels[(1<<CS)×2]`, plus a fixed ~3,692 B
+of palettes, LZW chunk buffer and line buffer.
+
+| `MAX_CODE_SIZE` | Decoder size | Plays arbitrary GIFs? |
+|---|---|---|
+| 12 (default) | 24,172 B | yes |
+| 11 | ~13,900 B | no |
+| 10 | ~8,800 B | no |
+
+The library's header states you can lower it, but only GIFs specially re-encoded to keep
+their codes short (with `flexigif -d`, **not** `gifsicle`) will then decode; arbitrary GIFs
+fail. Even at `MAX_CODE_SIZE 10`, a resident decoder leaves ~9 KB of heap, which forecloses
+milestone 6 — one BearSSL connection is budgeted at ~16 KB.
+
+**Decision (2026-09-17): GIF support dropped, heap reserved for Spotify.** `AnimatedGIF` was
+removed from `lib_deps`, and `tools/prepare_images.py` no longer emits GIFs — it converts one
+to its first frame as a still instead. The firmware already restricts uploads to `.jpg`/
+`.jpeg` (`imageExtensionAllowed`, `src/webserver.cpp`), so a GIF cannot be uploaded and
+silently fail to render.
+
+If GIF is ever wanted back, the approach that costs **no** persistent heap is to explode the
+GIF into numbered 240×240 JPEGs on the PC and play them through the existing TJpg path; the
+frame rate is then bounded by JPEG decode, which was not instrumented.
