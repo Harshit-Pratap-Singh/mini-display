@@ -1120,6 +1120,13 @@ input[type="submit"]:disabled,
                             <input data-live type="number" id="photoInterval" min="3" max="3600">
                         </div>
                         <div class="field">
+                            <label for="spotifyFace">Spotify face</label>
+                            <select data-live id="spotifyFace">
+                                <option value="0">Art - album art, track and telemetry</option>
+                                <option value="1">Text - no art, meters and big type</option>
+                            </select>
+                        </div>
+                        <div class="field">
                             <label for="clockFace">Clock face</label>
                             <select data-live id="clockFace">
                                 <option value="0">Cards - time card over a weather card</option>
@@ -2675,6 +2682,7 @@ function applyDashboardState(dashboardState) {
     setChecked("showSeconds", config.showSeconds);
     setChecked("showIp", config.showIp);
     document.getElementById("clockFace").value = String(config.clockFace ?? 0);
+    document.getElementById("spotifyFace").value = String(config.spotifyFace ?? 0);
     setValue("photoInterval", config.photoIntervalSec ?? 15);
     setChecked("photoShuffle", config.photoShuffle);
     applyEnabledPages(config.pages || {});
@@ -2947,6 +2955,7 @@ function buildConfigPayload() {
         showSeconds: document.getElementById("showSeconds").checked,
         showIp: document.getElementById("showIp").checked,
         clockFace: readInt("clockFace", 0),
+        spotifyFace: readInt("spotifyFace", 0),
         photoIntervalSec: readInt("photoInterval", 15),
         photoShuffle: document.getElementById("photoShuffle").checked,
         clockColors: {

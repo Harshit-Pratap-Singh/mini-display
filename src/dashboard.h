@@ -34,6 +34,13 @@ enum DashboardClockFaceId : uint8_t {
     DASHBOARD_CLOCK_FACE_COUNT
 };
 
+// Which Spotify player layout to draw. Designs in design/spotify-face-*.html.
+enum DashboardSpotifyFaceId : uint8_t {
+    DASHBOARD_SPOTIFY_FACE_ART = 0,  // album art beside the track, telemetry strip below
+    DASHBOARD_SPOTIFY_FACE_TEXT,     // no art, no JPEG decode: type and vector primitives
+    DASHBOARD_SPOTIFY_FACE_COUNT
+};
+
 enum DashboardThemeId : uint8_t {
     DASHBOARD_THEME_AURORA = 0,
     DASHBOARD_THEME_SUNSET,
@@ -124,6 +131,7 @@ struct DashboardConfig {
     char clockMinuteColor[8];  // minutes
     char clockSecondColor[8];  // the small seconds
     uint8_t clockFace;         // DashboardClockFaceId - which clock layout to draw
+    uint8_t spotifyFace;       // DashboardSpotifyFaceId - which player layout to draw
     uint16_t photoIntervalSec; // seconds each photo is held in the slideshow
     bool photoShuffle;         // pick the next photo at random instead of in order
     bool enabledPages[DASHBOARD_PAGE_COUNT];

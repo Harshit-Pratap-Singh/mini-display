@@ -41,6 +41,8 @@ constexpr uint16_t kSpGreen     = rgb565(0x1d, 0xb9, 0x54);  // #1db954 Spotify 
 constexpr uint16_t kSpAmber     = rgb565(0xff, 0xb9, 0x5f);  // #ffb95f secondary
 constexpr uint16_t kSpText      = rgb565(0xe1, 0xe2, 0xe9);  // #e1e2e9 on-surface
 constexpr uint16_t kSpMuted     = rgb565(0x87, 0x92, 0x9a);  // #87929a outline
+constexpr uint16_t kSpMint      = rgb565(0x56, 0xe5, 0xa9);  // #56e5a9 tertiary
+constexpr uint16_t kSpCyan      = rgb565(0x38, 0xbd, 0xf8);  // #38bdf8 primary
 
 constexpr int kArtBox = 80;   // the mockup's art slot
 constexpr int kArtX = 8;
@@ -1813,6 +1815,7 @@ uint32_t dashboardStaticHash(uint8_t pageId) {
             // Everything else the static half paints. Anything drawn but unhashed stays
             // on screen after it stops being true - the bug that left "NO TIME" on the
             // Matrix face after NTP synced.
+            hashValue(hash, dashboardConfig.spotifyFace);  // switching face = full redraw
             hashCString(hash, spotifyRuntime.deviceName);
             hashCString(hash, spotifyRuntime.repeatMode);
             hashValue(hash, spotifyRuntime.shuffle);
@@ -2173,9 +2176,30 @@ void drawSpotifyProgress() {
     }
 }
 
+// Defined further down with the rest of the Spotify faces; the dispatch lives up here
+// beside the other per-page update functions.
+void drawFace2Dynamic();
+void renderSpotifyFaceText();
+void renderSpotifyFaceArt();
+
 void updateSpotifyDynamicArea() {
+    if (dashboardConfig.spotifyFace == DASHBOARD_SPOTIFY_FACE_TEXT) {
+        drawFace2Dynamic();
+        return;
+    }
     drawSpotifyProgress();
     drawSpotifyTelemetry(true);  // labels are static; only the numbers move
+}
+
+void renderSpotifyPage() {
+    switch (dashboardConfig.spotifyFace) {
+        case DASHBOARD_SPOTIFY_FACE_TEXT:
+            renderSpotifyFaceText();
+            break;
+        default:
+            renderSpotifyFaceArt();
+            break;
+    }
 }
 
 void updateFocusDynamicArea() {
@@ -2665,7 +2689,143 @@ void renderPhotosPage() {
 }
 
 // Placeholder until stage 4: proves the page joins rotation and shows live state.
-void renderSpotifyPage() {
+
+// --- Spotify player face 2: text-first, no album art ------------------------
+// design/spotify-face-2-low-ram.html. The mockup's conceit is "zero JPEG decode, pure
+// vector primitives", and that is real here rather than decorative: this face never
+// touches TJpg or /art.jpg, so it costs nothing on a board with 2 KB of DRAM free
+// during a poll.
+
+// The mockup puts a seven-channel spectrum analyser across the top. The device has no
+// audio, so those bars would be animating invented numbers. Same visual language, real
+// quantities: signal, both heaps as they were during the poll, and round-trip time.
+void drawSpotifyMeters(bool valuesOnly) {
+    const int panelY = 22;
+    const int panelH = 68;
+    const int count = 4;
+    const int slotW = kBarW / count;
+
+    if (!valuesOnly) {
+        drawRoundedPanel(kBarX, panelY, kBarW, panelH, kSpPanel, kSpPanel);
+    }
+
+    const char *labels[count] = {"WIFI", "DRAM", "IRAM", "POLL"};
+    const uint16_t colors[count] = {kSpCyan, kSpMint, kSpGreen, kSpAmber};
+
+    // Each reading mapped to 0-100 against a ceiling that means something on this board:
+    // -30 dBm is excellent and -90 unusable; 8 KB of DRAM free during a poll would be
+    // luxurious; IRAM starts around 18 KB; a poll under 2.5 s is the best we ever see.
+    int rssi = WiFi.RSSI();
+    int percent[count];
+    percent[0] = constrain((rssi + 90) * 100 / 60, 0, 100);
+    percent[1] = constrain(static_cast<int>(spotifyRuntime.lastPollDramBytes / 82), 0, 100);
+    percent[2] = constrain(static_cast<int>(spotifyRuntime.lastPollIramBytes / 184), 0, 100);
+    percent[3] = constrain(100 - (spotifyRuntime.lastPollLatencyMs / 25), 0, 100);
+
+    char value[count][12];
+    snprintf(value[0], sizeof(value[0]), "%d", rssi);
+    snprintf(value[1], sizeof(value[1]), "%uk",
+             static_cast<unsigned>(spotifyRuntime.lastPollDramBytes / 1024U));
+    snprintf(value[2], sizeof(value[2]), "%uk",
+             static_cast<unsigned>(spotifyRuntime.lastPollIramBytes / 1024U));
+    snprintf(value[3], sizeof(value[3]), "%u", spotifyRuntime.lastPollLatencyMs);
+
+    const int barTop = panelY + 18;
+    const int barHeight = 30;
+    for (int i = 0; i < count; ++i) {
+        int centreX = kBarX + slotW * i + slotW / 2;
+        if (!valuesOnly) {
+            drawPaddedText(labels[i], centreX, panelY + 5, TC_DATUM, FONT_INFO, 0,
+                           kSpMuted, kSpPanel);
+        }
+        // Vertical bar, filled from the bottom like a level meter.
+        int barW = 18;
+        int filled = (barHeight * percent[i]) / 100;
+        tft.fillRect(centreX - barW / 2, barTop, barW, barHeight - filled, kSpSurface);
+        tft.fillRect(centreX - barW / 2, barTop + barHeight - filled, barW, filled, colors[i]);
+        drawPaddedText(value[i], centreX, barTop + barHeight + 4, TC_DATUM, FONT_INFO,
+                       slotW - 6, kSpText, kSpPanel);
+    }
+}
+
+// Sixteen chunks rather than a smooth bar, straight from the mockup. Drawn segment by
+// segment so a repaint only touches the chunks that changed state.
+void drawSegmentedProgress() {
+    const int segments = 16;
+    const int gap = 3;
+    const int segmentW = (kBarW - gap * (segments - 1)) / segments;
+    const int y = 168;
+    uint32_t progress = spotifyProgressMs();
+    int lit = 0;
+    if (spotifyRuntime.durationMs > 0) {
+        lit = static_cast<int>((static_cast<uint64_t>(progress) * segments) /
+                               spotifyRuntime.durationMs);
+        lit = constrain(lit, 0, segments);
+    }
+    for (int i = 0; i < segments; ++i) {
+        tft.fillRect(kBarX + i * (segmentW + gap), y, segmentW, 8,
+                     i < lit ? kSpGreen : kSpPanel);
+    }
+}
+
+void drawFace2Dynamic() {
+    drawSpotifyMeters(true);
+    drawSegmentedProgress();
+
+    uint32_t progress = spotifyProgressMs();
+    drawPaddedText(String("ELAPSED ") + formatTrackTime(progress), kBarX, 182, TL_DATUM,
+                   FONT_INFO, 96, kSpCyan, kSpSurface);
+    String remain = "REMAIN --:--";
+    if (spotifyRuntime.durationMs > progress) {
+        remain = String("REMAIN -") + formatTrackTime(spotifyRuntime.durationMs - progress);
+    }
+    drawPaddedText(remain, kBarX + kBarW, 182, TR_DATUM, FONT_INFO, 96, kSpMint, kSpSurface);
+}
+
+void renderSpotifyFaceText() {
+    static const int infoOnly[] = {FONT_INFO};
+    tft.fillScreen(kSpSurface);
+
+    tft.fillRect(0, 0, 240, 18, kSpBar);
+    tft.fillCircle(11, 9, 4, kSpGreen);
+    drawPaddedText("SPOTIFY", 20, 5, TL_DATUM, FONT_INFO, 0, kSpGreen, kSpBar);
+    drawPaddedText(spotifyRuntime.playing ? "PLAYING" : "PAUSED", 232, 5, TR_DATUM,
+                   FONT_INFO, 0, spotifyRuntime.playing ? kSpMint : kSpAmber, kSpBar);
+
+    drawSpotifyMeters(false);
+
+    // The mockup shows "TRACK // 04" and "FLAC - 24-BIT" here. Queue position, codec and
+    // bit depth are all absent from the Web API, so the row carries what is real.
+    String modes = String("SHUF:") + (spotifyRuntime.shuffle ? "ON" : "OFF");
+    if (spotifyRuntime.repeatMode[0] != '\0') {
+        modes += "  REP:" + String(spotifyRuntime.repeatMode);
+    }
+    modes.toUpperCase();
+    drawAdaptiveText(modes, kBarX, 96, 130, TL_DATUM, infoOnly, 1, kSpMuted, kSpSurface);
+    if (spotifyRuntime.volumePercent >= 0) {
+        drawPaddedText(String("VOL ") + spotifyRuntime.volumePercent + "%", kBarX + kBarW, 96,
+                       TR_DATUM, FONT_INFO, 70, kSpAmber, kSpSurface);
+    }
+
+    const int titleFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
+    drawAdaptiveText(spotifyRuntime.trackName[0] != '\0' ? spotifyRuntime.trackName : "Nothing playing",
+                     kBarX, 110, kBarW, TL_DATUM, titleFonts,
+                     sizeof(titleFonts) / sizeof(titleFonts[0]), kSpText, kSpSurface);
+
+    const int artistFonts[] = {FONT_LABEL, FONT_INFO};
+    drawAdaptiveText(spotifyRuntime.artistName, kBarX, 142, kBarW, TL_DATUM, artistFonts,
+                     sizeof(artistFonts) / sizeof(artistFonts[0]), kSpAmber, kSpSurface);
+
+    drawSegmentedProgress();
+    drawFace2Dynamic();
+
+    drawPaddedText(spotifyRuntime.lastError[0] != '\0' ? spotifyRuntime.lastError
+                                                       : spotifyRuntime.deviceName,
+                   120, 206, TC_DATUM, FONT_INFO, 230,
+                   spotifyRuntime.lastError[0] != '\0' ? kSpAmber : kSpMuted, kSpSurface);
+}
+
+void renderSpotifyFaceArt() {
     static const int infoOnly[] = {FONT_INFO};
     tft.fillScreen(kSpSurface);
 

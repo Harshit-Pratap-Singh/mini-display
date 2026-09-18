@@ -152,6 +152,7 @@ void setConfigDefaults() {
     copyString(dashboardConfig.clockMinuteColor, sizeof(dashboardConfig.clockMinuteColor), kDefaultClockMinuteColor);
     copyString(dashboardConfig.clockSecondColor, sizeof(dashboardConfig.clockSecondColor), kDefaultClockSecondColor);
     dashboardConfig.clockFace = DASHBOARD_CLOCK_FACE_CARDS;
+    dashboardConfig.spotifyFace = DASHBOARD_SPOTIFY_FACE_ART;
     dashboardConfig.photoIntervalSec = 15;
     dashboardConfig.photoShuffle = false;
     dashboardConfig.enabledPages[DASHBOARD_PAGE_CLOCK] = true;  // memset above cleared the rest
@@ -204,6 +205,9 @@ void normalizeConfig() {
     dashboardConfig.rotationIntervalSec = constrain(dashboardConfig.rotationIntervalSec, 3, 120);
     if (dashboardConfig.clockFace >= DASHBOARD_CLOCK_FACE_COUNT) {
         dashboardConfig.clockFace = DASHBOARD_CLOCK_FACE_CARDS;
+    }
+    if (dashboardConfig.spotifyFace >= DASHBOARD_SPOTIFY_FACE_COUNT) {
+        dashboardConfig.spotifyFace = DASHBOARD_SPOTIFY_FACE_ART;
     }
     dashboardConfig.photoIntervalSec = constrain(dashboardConfig.photoIntervalSec, 3, 3600);
     ensureAtLeastOnePageEnabled();
@@ -325,6 +329,7 @@ bool configEquals(const DashboardConfig &left, const DashboardConfig &right) {
         left.showSeconds != right.showSeconds ||
         left.showIp != right.showIp ||
         left.clockFace != right.clockFace ||
+        left.spotifyFace != right.spotifyFace ||
         left.photoIntervalSec != right.photoIntervalSec ||
         left.photoShuffle != right.photoShuffle) {
         return false;
@@ -387,6 +392,7 @@ void fillConfigJson(JsonObject root) {
     clockColors["minute"] = dashboardConfig.clockMinuteColor;
     clockColors["second"] = dashboardConfig.clockSecondColor;
     root["clockFace"] = dashboardConfig.clockFace;
+    root["spotifyFace"] = dashboardConfig.spotifyFace;
     root["photoIntervalSec"] = dashboardConfig.photoIntervalSec;
     root["photoShuffle"] = dashboardConfig.photoShuffle;
 
@@ -613,6 +619,11 @@ void applyConfigObject(JsonObjectConst root) {
         int face = root["clockFace"].as<int>();
         dashboardConfig.clockFace = static_cast<uint8_t>(
             constrain(face, 0, DASHBOARD_CLOCK_FACE_COUNT - 1));
+    }
+    if (!root["spotifyFace"].isNull()) {
+        int face = root["spotifyFace"].as<int>();
+        dashboardConfig.spotifyFace = static_cast<uint8_t>(
+            constrain(face, 0, DASHBOARD_SPOTIFY_FACE_COUNT - 1));
     }
     if (!root["photoIntervalSec"].isNull()) {
         dashboardConfig.photoIntervalSec =
