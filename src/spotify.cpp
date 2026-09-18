@@ -59,6 +59,11 @@ constexpr uint32_t kArtMaxBytes = 80000;
 constexpr unsigned long kArtStallMs = 8000;   // no bytes for this long = give up
 constexpr unsigned long kArtRetryMs = 30000;
 constexpr uint8_t kArtMaxFailures = 3;
+// An art download and the next poll otherwise land on consecutive passes of loop(),
+// microseconds apart. That is not two TLS connections at once, but it gives lwIP and
+// BearSSL no time to release the first 10 KB before the second is asked for, and the
+// symptom is a mid-parse allocation failure reported as "parse failed".
+constexpr unsigned long kPostArtSettleMs = 1500;
 
 char accessToken[SPOTIFY_ACCESS_TOKEN_LENGTH];
 unsigned long nextPollMs = 0;
@@ -103,6 +108,13 @@ int readHttpResponseHead(WiFiClient &client, int *retryAfterSeconds,
     // buffered locally - drain available() too or the read races the close.
     while (client.connected() || client.available()) {
         String line = client.readStringUntil('\n');
+        if (line.length() == 0) {
+            // Timed out or the socket closed mid-headers. The blank line that really ends
+            // the headers is "\r\n", which arrives here as "\r", so an empty string is
+            // never a legitimate end. Breaking here would hand the body parser a pile of
+            // headers and report it as a parse failure.
+            return -2;
+        }
         line.trim();
         if (line.length() == 0) {
             break;  // blank line: headers done, body follows
@@ -227,7 +239,8 @@ bool fetchNowPlaying() {
                  F("\r\nConnection: close\r\n\r\n"));
 
     int retryAfter = 0;
-    int status = readHttpResponseHead(client, &retryAfter);
+    long bodyLength = -1;
+    int status = readHttpResponseHead(client, &retryAfter, &bodyLength);
 
     if (status == 204) {
         // Nothing playing. There is NO body - parsing here would hang until timeout.
@@ -252,7 +265,7 @@ bool fetchNowPlaying() {
     }
     if (status != 200) {
         client.stop();
-        setError("API HTTP error");
+        setError(status == -2 ? "Headers timed out" : "API HTTP error");
         logPrintf("Spotify /me/player HTTP %d", status);
         return false;
     }
@@ -275,11 +288,15 @@ bool fetchNowPlaying() {
     filter["item"]["album"]["images"][0]["width"] = true;
 
     JsonDocument doc;
+    uint32_t heapBeforeParse = ESP.getFreeHeap();
     DeserializationError error = deserializeJson(doc, client, DeserializationOption::Filter(filter));
     client.stop();
     if (error) {
-        setError("API parse failed");
-        logPrintf("Spotify parse failed: %s", error.c_str());
+        char detail[sizeof(spotifyRuntime.lastError)];
+        snprintf(detail, sizeof(detail), "Parse: %s", error.c_str());
+        setError(detail);
+        logPrintf("Spotify parse failed: %s (heap %u before, %u after, body %ld B)",
+                  error.c_str(), heapBeforeParse, ESP.getFreeHeap(), bodyLength);
         return false;
     }
 
@@ -657,6 +674,10 @@ void spotifyLoop() {
         if (!downloadArt()) {
             artFailures++;
             nextArtMs = millis() + kArtRetryMs;
+        }
+        unsigned long settleUntil = millis() + kPostArtSettleMs;
+        if (static_cast<long>(settleUntil - nextPollMs) > 0) {
+            nextPollMs = settleUntil;  // never bring the poll forward, only push it back
         }
         return;
     }
