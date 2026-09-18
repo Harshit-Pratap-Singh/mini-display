@@ -1884,7 +1884,8 @@ uint32_t dashboardDynamicHash(uint8_t pageId) {
             // Telemetry at the resolution it is drawn - 5 dB buckets and whole KB - or the
             // strip repaints on every stray RSSI wobble.
             hashValue(hash, static_cast<int>(WiFi.RSSI()) / 5);
-            hashValue(hash, static_cast<int>(ESP.getFreeHeap() / 1024U));
+            hashValue(hash, static_cast<int>(spotifyRuntime.lastPollDramBytes / 1024U));
+            hashValue(hash, static_cast<int>(spotifyRuntime.lastPollIramBytes / 1024U));
             hashValue(hash, spotifyRuntime.lastPollLatencyMs);
             break;
         }
@@ -2122,21 +2123,28 @@ void drawSpotifyTelemetry(bool valuesOnly) {
     const int cellW = kBarW / 3;
     if (!valuesOnly) {
         drawRoundedPanel(kBarX, cellY, kBarW, cellH, kSpPanel, kSpPanel);
-        const char *labels[3] = {"WIFI", "HEAP", "POLL"};
+        const char *labels[3] = {"WIFI", "DRAM/IRAM", "POLL"};
         for (int i = 0; i < 3; ++i) {
             drawPaddedText(labels[i], kBarX + cellW * i + cellW / 2, cellY + 6, TC_DATUM,
                            FONT_INFO, 0, kSpMuted, kSpPanel);
         }
     }
 
-    char value[3][12];
+    char value[3][14];
     snprintf(value[0], sizeof(value[0]), "%ddB", WiFi.RSSI());
-    snprintf(value[1], sizeof(value[1]), "%uk",
-             static_cast<unsigned>(ESP.getFreeHeap() / 1024U));
+    // DRAM/IRAM as they were during the last poll, not now: idle heap says nothing about
+    // whether a poll fits, and the BearSSL receive buffer comes out of IRAM.
+    snprintf(value[1], sizeof(value[1]), "%u/%uk",
+             static_cast<unsigned>(spotifyRuntime.lastPollDramBytes / 1024U),
+             static_cast<unsigned>(spotifyRuntime.lastPollIramBytes / 1024U));
     snprintf(value[2], sizeof(value[2]), "%ums", spotifyRuntime.lastPollLatencyMs);
     for (int i = 0; i < 3; ++i) {
-        drawPaddedText(value[i], kBarX + cellW * i + cellW / 2, cellY + 20, TC_DATUM,
-                       FONT_LABEL, cellW - 8, kSpText, kSpPanel);
+        // FONT_INFO for the heap pair: two numbers and a slash do not fit the cell at
+        // FONT_LABEL, and silently clipping the IRAM figure would defeat the point.
+        int font = (i == 1) ? FONT_INFO : FONT_LABEL;
+        int baselineShift = (i == 1) ? 4 : 0;
+        drawPaddedText(value[i], kBarX + cellW * i + cellW / 2, cellY + 20 + baselineShift,
+                       TC_DATUM, font, cellW - 8, kSpText, kSpPanel);
     }
 }
 

@@ -340,15 +340,19 @@ bool fetchNowPlaying() {
     filter["item"]["album"]["images"][0]["width"] = true;
 
     JsonDocument doc;
-    uint32_t heapBeforeParse = ESP.getFreeHeap();
+    uint32_t heapBeforeParse = 0;
+    uint32_t iramBeforeParse = 0;
+    freeHeaps(heapBeforeParse, iramBeforeParse);
+    spotifyRuntime.lastPollDramBytes = heapBeforeParse;
+    spotifyRuntime.lastPollIramBytes = iramBeforeParse;
     DeserializationError error = deserializeJson(doc, client, DeserializationOption::Filter(filter));
     client.stop();
     if (error) {
         char detail[sizeof(spotifyRuntime.lastError)];
         snprintf(detail, sizeof(detail), "Parse: %s", error.c_str());
         setError(detail);
-        logPrintf("Spotify parse failed: %s (heap %u before, %u after, body %ld B)",
-                  error.c_str(), heapBeforeParse, ESP.getFreeHeap(), bodyLength);
+        logPrintf("Spotify parse failed: %s (DRAM %u, IRAM %u at parse, body %ld B)",
+                  error.c_str(), heapBeforeParse, iramBeforeParse, bodyLength);
         return false;
     }
 

@@ -50,6 +50,12 @@ struct SpotifyRuntime {
     // Round-trip time of the last successful poll, in ms - one of the real numbers the
     // telemetry strip shows in place of a fake audio visualiser.
     uint16_t lastPollLatencyMs;
+    // Free memory sampled WITH the TLS connection open, just before the parse - the
+    // moment that actually runs out. Idle heap says nothing about whether a poll fits.
+    // Two pools because ESP.getFreeHeap() reports DRAM only and the BearSSL receive
+    // buffer comes from the IRAM second heap.
+    uint32_t lastPollDramBytes;
+    uint32_t lastPollIramBytes;
     char artUrl[80];      // i.scdn.co URLs measured at 64 chars
     char artTrackId[24];  // which track the file at SPOTIFY_ART_PATH belongs to
     bool artReady;
