@@ -2180,12 +2180,18 @@ void drawSpotifyProgress() {
 // Defined further down with the rest of the Spotify faces; the dispatch lives up here
 // beside the other per-page update functions.
 void drawFace2Dynamic();
+void drawFace3Dynamic();
+void renderSpotifyFaceRadial();
 void renderSpotifyFaceText();
 void renderSpotifyFaceArt();
 
 void updateSpotifyDynamicArea() {
     if (dashboardConfig.spotifyFace == DASHBOARD_SPOTIFY_FACE_TEXT) {
         drawFace2Dynamic();
+        return;
+    }
+    if (dashboardConfig.spotifyFace == DASHBOARD_SPOTIFY_FACE_RADIAL) {
+        drawFace3Dynamic();
         return;
     }
     drawSpotifyProgress();
@@ -2196,6 +2202,9 @@ void renderSpotifyPage() {
     switch (dashboardConfig.spotifyFace) {
         case DASHBOARD_SPOTIFY_FACE_TEXT:
             renderSpotifyFaceText();
+            break;
+        case DASHBOARD_SPOTIFY_FACE_RADIAL:
+            renderSpotifyFaceRadial();
             break;
         default:
             renderSpotifyFaceArt();
@@ -2756,6 +2765,106 @@ void drawSpotifyEqualizer(bool full) {
             }
             tft.fillRect(x, y, colW, segH, color);
         }
+    }
+}
+
+
+// --- Spotify player face 3: radial ring --------------------------------------
+// design/spotify-face-3-radial-ring.html. The whole track is one 360 degree sweep from
+// 12 o'clock with a needle head riding the end of it.
+constexpr int kRingCenter = 120;
+constexpr int kRingOuter = 112;
+constexpr int kRingInner = 102;
+constexpr int kRingNeedle = 107;  // mid-band, so the head sits in the ring not beside it
+
+// TFT_eSPI measures from 6 o'clock growing towards 9, 12 then 3, so 12 o'clock is 180.
+constexpr int kRingTop = 180;
+
+void ringPoint(int angleDegrees, int radius, int &x, int &y) {
+    float radians = static_cast<float>(angleDegrees) * DEG_TO_RAD;
+    x = kRingCenter - static_cast<int>(lroundf(sinf(radians) * radius));
+    y = kRingCenter + static_cast<int>(lroundf(cosf(radians) * radius));
+}
+
+void drawSpotifyRing() {
+    // Track first, full circle, so an empty ring still reads as a gauge and the previous
+    // needle position is painted over without tracking where it used to be.
+    tft.drawArc(kRingCenter, kRingCenter, kRingOuter, kRingInner, 0, 360,
+                kSpPanel, kSpSurface, true);
+
+    uint32_t progress = spotifyProgressMs();
+    int sweep = 0;
+    if (spotifyRuntime.durationMs > 0) {
+        sweep = static_cast<int>((static_cast<uint64_t>(progress) * 360) /
+                                 spotifyRuntime.durationMs);
+        sweep = constrain(sweep, 0, 360);
+    }
+
+    if (sweep >= 2) {
+        int end = kRingTop + sweep;
+        // drawArc takes 0-360 and wraps when end < start, which is what a sweep past
+        // 9 o'clock needs.
+        tft.drawArc(kRingCenter, kRingCenter, kRingOuter, kRingInner,
+                    kRingTop, end % 360, kSpGreen, kSpSurface, true);
+    }
+
+    int needleX = 0;
+    int needleY = 0;
+    ringPoint(kRingTop + sweep, kRingNeedle, needleX, needleY);
+    tft.fillCircle(needleX, needleY, 4, kSpText);
+}
+
+void drawFace3Dynamic() {
+    drawSpotifyRing();
+
+    uint32_t progress = spotifyProgressMs();
+    String elapsed = formatTrackTime(progress);
+    String total = spotifyRuntime.durationMs > 0 ? formatTrackTime(spotifyRuntime.durationMs)
+                                                 : String("--:--");
+    drawPaddedText(elapsed + " / " + total, kRingCenter, 158, TC_DATUM, FONT_INFO, 120,
+                   kSpMint, kSpSurface);
+    drawPaddedText(spotifyRuntime.playing ? "PLAYING" : "PAUSED", kRingCenter, 176, TC_DATUM,
+                   FONT_INFO, 120, spotifyRuntime.playing ? kSpGreen : kSpAmber, kSpSurface);
+}
+
+void renderSpotifyFaceRadial() {
+    static const int infoOnly[] = {FONT_INFO};
+    tft.fillScreen(kSpSurface);
+
+    // Three pills across the top, inside the ring. The mockup's third reads "FLAC"; codec
+    // is not in the Web API, so it carries shuffle and repeat, which are.
+    if (spotifyRuntime.volumePercent >= 0) {
+        drawPaddedText(String(spotifyRuntime.volumePercent) + "%", 44, 30, TC_DATUM,
+                       FONT_INFO, 44, kSpAmber, kSpSurface);
+    }
+    drawAdaptiveText(spotifyRuntime.deviceName[0] != '\0' ? spotifyRuntime.deviceName : "SPOTIFY",
+                     kRingCenter, 30, 96, TC_DATUM, infoOnly, 1, kSpCyan, kSpSurface);
+    String modes = spotifyRuntime.shuffle ? "SHUF" : "SEQ";
+    if (spotifyRuntime.repeatMode[0] != '\0' && strcmp(spotifyRuntime.repeatMode, "off") != 0) {
+        modes += "+REP";
+    }
+    modes.toUpperCase();
+    drawPaddedText(modes, 196, 30, TC_DATUM, FONT_INFO, 60, kSpMuted, kSpSurface);
+
+    // Vinyl groove, straight from the mockup: one thin circle inside the ring.
+    tft.drawCircle(kRingCenter, kRingCenter, 78, kSpPanel);
+
+    const int titleFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
+    drawAdaptiveText(spotifyRuntime.trackName[0] != '\0' ? spotifyRuntime.trackName : "Nothing playing",
+                     kRingCenter, 96, 150, TC_DATUM, titleFonts,
+                     sizeof(titleFonts) / sizeof(titleFonts[0]), kSpText, kSpSurface);
+
+    const int artistFonts[] = {FONT_LABEL, FONT_INFO};
+    drawAdaptiveText(spotifyRuntime.artistName, kRingCenter, 130, 150, TC_DATUM, artistFonts,
+                     sizeof(artistFonts) / sizeof(artistFonts[0]), kSpGreen, kSpSurface);
+
+    drawFace3Dynamic();
+
+    // The mockup's PREV / NEXT belong to a board with buttons. This one has none and the
+    // token is read-only, so the footer carries the error line instead.
+    if (spotifyRuntime.lastError[0] != '\0') {
+        drawPaddedText(spotifyRuntime.lastError, kRingCenter, 210, TC_DATUM, FONT_INFO, 200,
+                       kSpAmber, kSpSurface);
     }
 }
 
