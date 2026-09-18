@@ -1412,6 +1412,53 @@ input[type="submit"]:disabled,
         <div class="panel-stack" style="margin-top: 16px;">
             <section class="panel">
                 <div class="panel-header">
+                    <h2 class="panel-title">Spotify</h2>
+                </div>
+
+                <label class="toggle"><span>Enable Spotify polling</span><input type="checkbox" id="spotifyEnabled"></label>
+
+                <div class="field" style="margin-top: 12px;">
+                    <label for="spotifyClientId">Client ID</label>
+                    <input type="text" id="spotifyClientId" placeholder="From developer.spotify.com/dashboard" autocomplete="off">
+                </div>
+
+                <div class="field">
+                    <label for="spotifyClientSecret">Client secret</label>
+                    <input type="password" id="spotifyClientSecret" placeholder="Stored on the device only" autocomplete="new-password">
+                    <small id="spotifySecretState">Not set.</small>
+                </div>
+
+                <div class="field">
+                    <label for="spotifyRefreshToken">Refresh token</label>
+                    <input type="password" id="spotifyRefreshToken" placeholder="Run tools/spotify_auth.py on your PC" autocomplete="new-password">
+                    <small id="spotifyTokenState">Not set. The device never does the browser sign-in itself - run <code>tools/spotify_auth.py --client-id &lt;id&gt;</code> and paste the token it prints.</small>
+                </div>
+
+                <div class="field">
+                    <label for="spotifyIdleMinutes">Keep the page for (minutes after playback stops)</label>
+                    <input type="number" id="spotifyIdleMinutes" min="0" max="1440" step="1">
+                    <small>0 keeps it forever. A short pause should not yank the screen away.</small>
+                </div>
+
+                <label class="toggle"><span>Download album art</span><input type="checkbox" id="spotifyShowArt"></label>
+
+                <div class="status-list" style="margin-top: 14px;">
+                    <div class="status-item"><span>State</span><span id="spotifyStateLabel">--</span></div>
+                    <div class="status-item"><span>Track</span><span id="spotifyTrackLabel">--</span></div>
+                    <div class="status-item"><span>Poll</span><span id="spotifyPollLabel">--</span></div>
+                    <div class="status-item"><span>Last error</span><span id="spotifyErrorLabel">--</span></div>
+                </div>
+
+                <div class="button-row" style="margin-top: 14px;">
+                    <button id="saveSpotifyButton" type="button" onclick="commitSpotifyConfig()">Save Spotify</button>
+                    <button type="button" class="ghost" onclick="loadSpotifyState()">Refresh status</button>
+                </div>
+            </section>
+        </div>
+
+        <div class="panel-stack" style="margin-top: 16px;">
+            <section class="panel">
+                <div class="panel-header">
                     <h2 class="panel-title">Markets</h2>
                 </div>
 
@@ -3119,6 +3166,102 @@ async function commitState() {
     }
 }
 
+function buildSpotifyPayload() {
+    const payload = {
+        enabled: document.getElementById("spotifyEnabled").checked,
+        clientId: document.getElementById("spotifyClientId").value.trim(),
+        idleMinutes: Number(document.getElementById("spotifyIdleMinutes").value) || 0,
+        showArt: document.getElementById("spotifyShowArt").checked
+    };
+    const secret = document.getElementById("spotifyClientSecret").value.trim();
+    const token = document.getElementById("spotifyRefreshToken").value.trim();
+    // Blank means "keep what the device already holds". /spotify.json never sends these
+    // back, so posting "" would wipe credentials that cost a browser round trip to get.
+    if (secret) {
+        payload.clientSecret = secret;
+    }
+    if (token) {
+        payload.refreshToken = token;
+    }
+    return payload;
+}
+
+function applySpotifyState(state) {
+    const config = state.config || {};
+    const status = state.status || {};
+
+    setChecked("spotifyEnabled", Boolean(config.enabled));
+    setChecked("spotifyShowArt", Boolean(config.showArt));
+    document.getElementById("spotifyClientId").value = config.clientId || "";
+    document.getElementById("spotifyIdleMinutes").value =
+        config.idleMinutes === undefined ? 5 : config.idleMinutes;
+
+    document.getElementById("spotifySecretState").textContent = config.hasClientSecret
+        ? "Stored on the device. Leave blank to keep it."
+        : "Not set.";
+    document.getElementById("spotifyTokenState").innerHTML = config.hasRefreshToken
+        ? "Stored on the device. Leave blank to keep it."
+        : "Not set. The device cannot do the browser sign-in itself - run "
+          + "<code>tools/spotify_auth.py --client-id &lt;id&gt;</code> on your PC and paste what it prints.";
+
+    let stateText = "Idle";
+    if (!config.enabled) {
+        stateText = "Disabled";
+    } else if (!status.hasCredentials) {
+        stateText = "No credentials";
+    } else if (status.playing) {
+        stateText = "Playing";
+    } else if (status.available) {
+        stateText = "Paused, page still shown";
+    }
+    document.getElementById("spotifyStateLabel").textContent = stateText;
+
+    document.getElementById("spotifyTrackLabel").textContent = status.track
+        ? status.track + (status.artist ? " - " + status.artist : "")
+        : "--";
+
+    let pollText = "--";
+    if (status.pollMs) {
+        pollText = status.pollMs + " ms";
+        if (status.nextPollInMs !== undefined) {
+            pollText += ", next in " + Math.round(status.nextPollInMs / 1000) + " s";
+        }
+    }
+    document.getElementById("spotifyPollLabel").textContent = pollText;
+    document.getElementById("spotifyErrorLabel").textContent = status.lastError || "None";
+}
+
+async function loadSpotifyState() {
+    try {
+        const response = await request("/spotify.json");
+        if (!response.ok) {
+            throw new Error("Spotify state failed");
+        }
+        applySpotifyState(await response.json());
+    } catch (error) {
+        console.error(error);
+        document.getElementById("spotifyStateLabel").textContent = "Unavailable";
+    }
+}
+
+async function commitSpotifyConfig() {
+    try {
+        setSyncState("Saving Spotify", "pending");
+        const response = await postJson("/spotify/save", buildSpotifyPayload());
+        if (!response.ok) {
+            throw new Error(await response.text());
+        }
+        // Do not leave the secret and token sitting in the DOM after a successful save.
+        document.getElementById("spotifyClientSecret").value = "";
+        document.getElementById("spotifyRefreshToken").value = "";
+        setSyncState("Saved", "saved");
+        await loadSpotifyState();
+    } catch (error) {
+        console.error(error);
+        setSyncState("Spotify save failed", "error");
+    }
+}
+
 async function commitFeedConfig() {
     if (hydrating || !feedDirty) {
         return;
@@ -3685,6 +3828,9 @@ async function loadAllState() {
         applyAppState(appState);
         applyDashboardState(dashboardState);
         applyFeedState(feedsState);
+        // Separate request: a Spotify failure must not take the whole dashboard down with
+        // it, and loadSpotifyState() already swallows its own errors.
+        await loadSpotifyState();
 
         const firmwareVersion = versionState.version || "Unknown";
         const storageText = `${formatBytes(spaceState.free)} free`;
