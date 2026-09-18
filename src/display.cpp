@@ -2769,6 +2769,70 @@ void drawSpotifyEqualizer(bool full) {
 }
 
 
+// Wraps on spaces and keeps the BIGGEST font that fits within maxLines, rather than
+// shrinking to fit one line. Fonts 6 and 7 are digits-only, so FONT_BODY at 26 px is the
+// largest that can draw a track name at all - and a long title at 16 px on one line is
+// harder to read across a room than the same title at 26 px on two. Returns lines drawn.
+// Bottom-anchored: the block grows upward from bottomY, so adding a line reaches into
+// empty space above instead of pushing into whatever sits below.
+int drawWrappedText(const String &text, int centerX, int bottomY, int maxWidth, int maxLines,
+                    const int *fonts, size_t fontCount, uint16_t color, uint16_t background) {
+    String lines[4];
+    if (maxLines > 4) {
+        maxLines = 4;
+    }
+    int chosenFont = fonts[fontCount - 1];
+    int used = 0;
+
+    for (size_t candidate = 0; candidate < fontCount; ++candidate) {
+        int font = fonts[candidate];
+        int count = 0;
+        String current;
+        bool overflow = false;
+        int start = 0;
+        while (start <= static_cast<int>(text.length()) && !overflow) {
+            int space = text.indexOf(' ', start);
+            String word = (space < 0) ? text.substring(start) : text.substring(start, space);
+            String merged = current.length() ? current + " " + word : word;
+            if (tft.textWidth(merged, font) <= maxWidth || current.length() == 0) {
+                current = merged;
+            } else {
+                if (count >= maxLines) { overflow = true; break; }
+                lines[count++] = current;
+                current = word;
+            }
+            if (space < 0) break;
+            start = space + 1;
+        }
+        if (!overflow && current.length() > 0) {
+            if (count < maxLines) {
+                lines[count++] = current;
+            } else {
+                overflow = true;
+            }
+        }
+        if (!overflow) {
+            chosenFont = font;
+            used = count;
+            break;
+        }
+        used = 0;
+    }
+
+    if (used == 0) {  // nothing fit even at the smallest font: clip one line
+        lines[0] = fitTextToWidth(text, chosenFont, maxWidth);
+        used = 1;
+    }
+
+    int lineHeight = tft.fontHeight(chosenFont);
+    int topY = bottomY - used * lineHeight;
+    for (int i = 0; i < used; ++i) {
+        drawPaddedText(lines[i], centerX, topY + i * lineHeight, TC_DATUM, chosenFont,
+                       maxWidth, color, background);
+    }
+    return used;
+}
+
 // --- Spotify player face 3: radial ring --------------------------------------
 // design/spotify-face-3-radial-ring.html. The whole track is one 360 degree sweep from
 // 12 o'clock with a needle head riding the end of it.
@@ -2786,12 +2850,28 @@ void ringPoint(int angleDegrees, int radius, int &x, int &y) {
     y = kRingCenter + static_cast<int>(lroundf(cosf(radians) * radius));
 }
 
-void drawSpotifyRing() {
-    // Track first, full circle, so an empty ring still reads as a gauge and the previous
-    // needle position is painted over without tracking where it used to be.
-    tft.drawArc(kRingCenter, kRingCenter, kRingOuter, kRingInner, 0, 360,
-                kSpPanel, kSpSurface, true);
+int lastRingSweep = -1;
 
+void drawRingBand(int fromSweep, int toSweep, uint16_t color) {
+    if (toSweep <= fromSweep) {
+        return;
+    }
+    tft.drawArc(kRingCenter, kRingCenter, kRingOuter, kRingInner,
+                (kRingTop + fromSweep) % 360, (kRingTop + toSweep) % 360,
+                color, kSpSurface, true);
+}
+
+void drawRingNeedle(int sweep) {
+    int x = 0;
+    int y = 0;
+    ringPoint(kRingTop + sweep, kRingNeedle, x, y);
+    tft.fillCircle(x, y, 4, kSpText);
+}
+
+// full=true repaints everything; otherwise only the few degrees that changed are touched.
+// Repainting the whole ring twice a second is visible as a flicker, and there is no
+// framebuffer to hide it behind.
+void drawSpotifyRing(bool full) {
     uint32_t progress = spotifyProgressMs();
     int sweep = 0;
     if (spotifyRuntime.durationMs > 0) {
@@ -2800,22 +2880,30 @@ void drawSpotifyRing() {
         sweep = constrain(sweep, 0, 360);
     }
 
-    if (sweep >= 2) {
-        int end = kRingTop + sweep;
-        // drawArc takes 0-360 and wraps when end < start, which is what a sweep past
-        // 9 o'clock needs.
-        tft.drawArc(kRingCenter, kRingCenter, kRingOuter, kRingInner,
-                    kRingTop, end % 360, kSpGreen, kSpSurface, true);
+    if (full || sweep < lastRingSweep || lastRingSweep < 0) {
+        // New track, a seek backwards, or a fresh page: everything is stale.
+        tft.drawArc(kRingCenter, kRingCenter, kRingOuter, kRingInner, 0, 360,
+                    kSpPanel, kSpSurface, true);
+        drawRingBand(0, sweep, kSpGreen);
+        drawRingNeedle(sweep);
+        lastRingSweep = sweep;
+        return;
+    }
+    if (sweep == lastRingSweep) {
+        return;  // nothing moved: touching the ring at all would only flicker it
     }
 
-    int needleX = 0;
-    int needleY = 0;
-    ringPoint(kRingTop + sweep, kRingNeedle, needleX, needleY);
-    tft.fillCircle(needleX, needleY, 4, kSpText);
+    // Fill in the new wedge, then repaint a small window around where the needle was so
+    // its old circle is covered: green behind the new edge, track colour ahead of it.
+    drawRingBand(lastRingSweep, sweep, kSpGreen);
+    drawRingBand(max(0, lastRingSweep - 5), sweep, kSpGreen);
+    drawRingBand(sweep, min(360, sweep + 5), kSpPanel);
+    drawRingNeedle(sweep);
+    lastRingSweep = sweep;
 }
 
 void drawFace3Dynamic() {
-    drawSpotifyRing();
+    drawSpotifyRing(false);
 
     uint32_t progress = spotifyProgressMs();
     String elapsed = formatTrackTime(progress);
@@ -2849,15 +2937,20 @@ void renderSpotifyFaceRadial() {
     // Vinyl groove, straight from the mockup: one thin circle inside the ring.
     tft.drawCircle(kRingCenter, kRingCenter, 78, kSpPanel);
 
+    // Title grows UPWARD from a fixed baseline into the empty space at the top of the
+    // ring, so a long name gets two or three big lines instead of one shrunken one.
+    // Width is kept inside the vinyl groove so the text never crowds the ring band.
+    String title = spotifyRuntime.trackName[0] != '\0' ? spotifyRuntime.trackName
+                                                       : "Nothing playing";
     const int titleFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
-    drawAdaptiveText(spotifyRuntime.trackName[0] != '\0' ? spotifyRuntime.trackName : "Nothing playing",
-                     kRingCenter, 96, 150, TC_DATUM, titleFonts,
-                     sizeof(titleFonts) / sizeof(titleFonts[0]), kSpText, kSpSurface);
+    drawWrappedText(title, kRingCenter, 124, 140, 3, titleFonts,
+                    sizeof(titleFonts) / sizeof(titleFonts[0]), kSpText, kSpSurface);
 
     const int artistFonts[] = {FONT_LABEL, FONT_INFO};
     drawAdaptiveText(spotifyRuntime.artistName, kRingCenter, 130, 150, TC_DATUM, artistFonts,
                      sizeof(artistFonts) / sizeof(artistFonts[0]), kSpGreen, kSpSurface);
 
+    drawSpotifyRing(true);   // full repaint once, then the dynamic pass only moves the edge
     drawFace3Dynamic();
 
     // The mockup's PREV / NEXT belong to a board with buttons. This one has none and the
