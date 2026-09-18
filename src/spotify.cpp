@@ -67,6 +67,28 @@ constexpr uint8_t kArtMaxFailures = 3;
 // symptom is a mid-parse allocation failure reported as "parse failed".
 constexpr unsigned long kPostArtSettleMs = 1500;
 
+// The full /v1/me/player payload is 2.6 KB+ and we render a dozen fields of it, so the
+// parse is always filtered. Held for the life of the program rather than rebuilt per
+// poll: the rebuild churned the heap at exactly the wrong moment.
+JsonDocument pollFilter;
+
+void buildPollFilter() {
+    pollFilter.clear();
+    pollFilter["is_playing"] = true;
+    pollFilter["progress_ms"] = true;
+    pollFilter["shuffle_state"] = true;
+    pollFilter["repeat_state"] = true;
+    pollFilter["device"]["name"] = true;
+    pollFilter["device"]["volume_percent"] = true;
+    pollFilter["item"]["name"] = true;
+    pollFilter["item"]["duration_ms"] = true;
+    pollFilter["item"]["id"] = true;
+    pollFilter["item"]["artists"][0]["name"] = true;
+    pollFilter["item"]["album"]["images"][0]["url"] = true;
+    pollFilter["item"]["album"]["images"][0]["width"] = true;
+    pollFilter.shrinkToFit();
+}
+
 char accessToken[SPOTIFY_ACCESS_TOKEN_LENGTH];
 unsigned long nextPollMs = 0;
 unsigned long nextArtMs = 0;
@@ -323,29 +345,14 @@ bool fetchNowPlaying() {
         return false;
     }
 
-    // Filter: the full payload is 2.6 KB+ and we need a dozen fields. Without this the
-    // parse would not fit comfortably beside a live TLS connection.
-    JsonDocument filter;
-    filter["is_playing"] = true;
-    filter["progress_ms"] = true;
-    filter["shuffle_state"] = true;
-    filter["repeat_state"] = true;
-    filter["device"]["name"] = true;
-    filter["device"]["volume_percent"] = true;
-    filter["item"]["name"] = true;
-    filter["item"]["duration_ms"] = true;
-    filter["item"]["id"] = true;
-    filter["item"]["artists"][0]["name"] = true;
-    filter["item"]["album"]["images"][0]["url"] = true;
-    filter["item"]["album"]["images"][0]["width"] = true;
-
     JsonDocument doc;
     uint32_t heapBeforeParse = 0;
     uint32_t iramBeforeParse = 0;
     freeHeaps(heapBeforeParse, iramBeforeParse);
     spotifyRuntime.lastPollDramBytes = heapBeforeParse;
     spotifyRuntime.lastPollIramBytes = iramBeforeParse;
-    DeserializationError error = deserializeJson(doc, client, DeserializationOption::Filter(filter));
+    DeserializationError error = deserializeJson(doc, client,
+                                                DeserializationOption::Filter(pollFilter));
     client.stop();
     if (error) {
         char detail[sizeof(spotifyRuntime.lastError)];
@@ -582,6 +589,7 @@ void spotifyInit() {
     if (!spotifyLoadConfig()) {
         spotifySaveConfig();
     }
+    buildPollFilter();  // once, while the heap is still clean
     spotifyRuntime.hasCredentials = credentialsPresent();
     logPrintf("Spotify: %s", spotifyConfig.enabled
                                  ? (spotifyRuntime.hasCredentials ? "enabled" : "enabled but no credentials")
