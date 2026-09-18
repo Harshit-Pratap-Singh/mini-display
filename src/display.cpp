@@ -2911,28 +2911,36 @@ void drawFace3Dynamic() {
                                                  : String("--:--");
     drawPaddedText(elapsed + " / " + total, kRingCenter, 158, TC_DATUM, FONT_INFO, 120,
                    kSpMint, kSpSurface);
-    drawPaddedText(spotifyRuntime.playing ? "PLAYING" : "PAUSED", kRingCenter, 176, TC_DATUM,
-                   FONT_INFO, 120, spotifyRuntime.playing ? kSpGreen : kSpAmber, kSpSurface);
+
+    // Bottom row, all three inside the ring at y=190 (usable x 46..194) and padded so
+    // they cannot paint over each other: 50..94, 95..145, 146..190.
+    if (spotifyRuntime.volumePercent >= 0) {
+        drawPaddedText(String(spotifyRuntime.volumePercent) + "%", 72, 190, TC_DATUM,
+                       FONT_INFO, 44, kSpAmber, kSpSurface);
+    }
+    drawPaddedText(spotifyRuntime.playing ? "PLAYING" : "PAUSED", kRingCenter, 190, TC_DATUM,
+                   FONT_INFO, 50, spotifyRuntime.playing ? kSpGreen : kSpAmber, kSpSurface);
+    String modes = spotifyRuntime.shuffle ? "SHUF" : "SEQ";
+    if (spotifyRuntime.repeatMode[0] != '\0' && strcmp(spotifyRuntime.repeatMode, "off") != 0) {
+        modes += "+R";
+    }
+    modes.toUpperCase();
+    drawPaddedText(modes, 168, 190, TC_DATUM, FONT_INFO, 44, kSpMuted, kSpSurface);
 }
 
 void renderSpotifyFaceRadial() {
     static const int infoOnly[] = {FONT_INFO};
     tft.fillScreen(kSpSurface);
 
-    // Three pills across the top, inside the ring. The mockup's third reads "FLAC"; codec
-    // is not in the Web API, so it carries shuffle and repeat, which are.
-    if (spotifyRuntime.volumePercent >= 0) {
-        drawPaddedText(String(spotifyRuntime.volumePercent) + "%", 44, 30, TC_DATUM,
-                       FONT_INFO, 44, kSpAmber, kSpSurface);
-    }
+    // A circle inscribed in a square leaves nothing in the corners, so a row's usable
+    // width shrinks fast towards the top: at y=30 only x 72..168 is inside the ring, and
+    // the volume and mode pills used to sit at x=44 and x=196 - 118 px from the centre
+    // against an outer radius of 112, i.e. outside the ring entirely. The top row now
+    // carries the device name alone, and the pills move down to y=190 where 148 px is
+    // free. The mockup's third pill reads "FLAC"; codec is not in the Web API, so it
+    // carries shuffle and repeat, which are.
     drawAdaptiveText(spotifyRuntime.deviceName[0] != '\0' ? spotifyRuntime.deviceName : "SPOTIFY",
-                     kRingCenter, 30, 96, TC_DATUM, infoOnly, 1, kSpCyan, kSpSurface);
-    String modes = spotifyRuntime.shuffle ? "SHUF" : "SEQ";
-    if (spotifyRuntime.repeatMode[0] != '\0' && strcmp(spotifyRuntime.repeatMode, "off") != 0) {
-        modes += "+REP";
-    }
-    modes.toUpperCase();
-    drawPaddedText(modes, 196, 30, TC_DATUM, FONT_INFO, 60, kSpMuted, kSpSurface);
+                     kRingCenter, 30, 90, TC_DATUM, infoOnly, 1, kSpCyan, kSpSurface);
 
     // Vinyl groove, straight from the mockup: one thin circle inside the ring.
     tft.drawCircle(kRingCenter, kRingCenter, 78, kSpPanel);
@@ -2954,9 +2962,10 @@ void renderSpotifyFaceRadial() {
     drawFace3Dynamic();
 
     // The mockup's PREV / NEXT belong to a board with buttons. This one has none and the
-    // token is read-only, so the footer carries the error line instead.
+    // token is read-only, so the footer carries the error line instead. Narrow, because
+    // y=210 is back down to 96 px of usable width; face 1 shows the error in full.
     if (spotifyRuntime.lastError[0] != '\0') {
-        drawPaddedText(spotifyRuntime.lastError, kRingCenter, 210, TC_DATUM, FONT_INFO, 200,
+        drawPaddedText(spotifyRuntime.lastError, kRingCenter, 210, TC_DATUM, FONT_INFO, 90,
                        kSpAmber, kSpSurface);
     }
 }
