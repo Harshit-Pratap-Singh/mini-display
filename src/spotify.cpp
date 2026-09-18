@@ -49,6 +49,7 @@ constexpr unsigned long kPollNearTrackEndMs = 5000;
 constexpr unsigned long kTrackEndWindowMs = 20000;
 constexpr unsigned long kPollWhileIdleMs = 30000;   // nothing playing: stop hammering
 constexpr unsigned long kPollAfterErrorMs = 60000;
+constexpr unsigned long kPollAfterTransientMs = 15000;
 // Access tokens last 3600 s (measured). Refresh early so a poll never races expiry.
 constexpr unsigned long kTokenLifetimeMs = 3300000UL;
 
@@ -299,8 +300,26 @@ bool fetchNowPlaying() {
     }
     if (status != 200) {
         client.stop();
-        setError(status == -2 ? "Headers timed out" : "API HTTP error");
-        logPrintf("Spotify /me/player HTTP %d", status);
+        char detail[sizeof(spotifyRuntime.lastError)];
+        if (status == -2) {
+            strcpy(detail, "Headers timed out");
+        } else if (status == -1) {
+            // Connected, then nothing readable came back. Not an HTTP error at all -
+            // the socket died before the status line, so calling it one misleads.
+            strcpy(detail, "No response");
+        } else {
+            snprintf(detail, sizeof(detail), "HTTP %d", status);
+        }
+        setError(detail);
+        uint32_t dram = 0;
+        uint32_t iram = 0;
+        freeHeaps(dram, iram);
+        logPrintf("Spotify /me/player HTTP %d (DRAM %u, IRAM %u)", status, dram, iram);
+        // 5xx and dropped sockets are transient; a minute of stale screen for a blip is
+        // too long. Client errors are our fault and will not fix themselves, so those
+        // keep the full backoff.
+        bool transient = (status < 0) || (status >= 500);
+        nextPollMs = millis() + (transient ? kPollAfterTransientMs : kPollAfterErrorMs);
         return false;
     }
 
@@ -745,7 +764,8 @@ void spotifyLoop() {
 
     bool ok = fetchNowPlaying();
     if (!ok) {
-        // 429 sets its own backoff; anything else waits a minute.
+        // 429 and the HTTP-status path set their own backoff. Only cover the failures
+        // that did not - connect and parse errors - and give those the full minute.
         if (static_cast<long>(millis() - nextPollMs) >= 0) {
             nextPollMs = millis() + kPollAfterErrorMs;
         }

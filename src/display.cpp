@@ -30,7 +30,11 @@ constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue) {
 // --- Spotify player face 1: album art + telemetry -----------------------------
 // Palette is fixed, not activeTheme(): these colours come from the mockups in design/.
 // DESIGN.md supplies the neutrals and the mockup adds Spotify green as the brand accent.
-constexpr uint16_t kSpSurface   = rgb565(0x11, 0x13, 0x18);  // #111318 surface
+// DESIGN.md's surface is #111318, a very dark blue-grey rather than black. On a monitor
+// that reads as black; on a backlit IPS panel it lands at 6% brightness on top of the
+// backlight's own leakage and looks washed grey-blue. True black gives the LCD the
+// most contrast it can physically manage, so the page uses it in place of the token.
+constexpr uint16_t kSpSurface   = rgb565(0x00, 0x00, 0x00);  // #111318 -> true black
 constexpr uint16_t kSpBar       = rgb565(0x0c, 0x0e, 0x13);  // #0c0e13 container-lowest
 constexpr uint16_t kSpPanel     = rgb565(0x1d, 0x20, 0x24);  // #1d2024 container
 constexpr uint16_t kSpGreen     = rgb565(0x1d, 0xb9, 0x54);  // #1db954 Spotify green
