@@ -1175,6 +1175,7 @@ input[type="submit"]:disabled,
                     <div class="chip-grid">
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageClock"><span>Clock</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pagePhotos"><span>Photos</span></label>
+                        <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageSpotify"><span>Spotify</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageMarkets"><span>Markets</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageHome"><span>Home Assistant</span></label>
                         <label class="chip-toggle"><input data-live data-page-toggle type="checkbox" id="pageFocus"><span>Focus</span></label>
@@ -1948,16 +1949,21 @@ const defaultNightCustomTheme = {
     text: "#F3F6FC"
 };
 
+// index MUST match DashboardPageId in dashboard.h: refreshShowNowOptions() sends it
+// verbatim as the page id to POST /page. It used to be the array position, so inserting
+// DASHBOARD_PAGE_SPOTIFY at 2 silently aimed "Show now: Markets" at the Spotify page and
+// shifted every page after Photos by one. Keep these numbers literal and in step.
 const dashboardPageControls = [
-    { key: "clock", id: "pageClock" },
-    { key: "photos", id: "pagePhotos" },
-    { key: "markets", id: "pageMarkets" },
-    { key: "home", id: "pageHome" },
-    { key: "focus", id: "pageFocus" },
-    { key: "world", id: "pageWorld" },
-    { key: "event", id: "pageEvent" },
-    { key: "quote", id: "pageQuote" },
-    { key: "status", id: "pageStatus" }
+    { key: "clock", id: "pageClock", index: 0 },
+    { key: "photos", id: "pagePhotos", index: 1 },
+    { key: "spotify", id: "pageSpotify", index: 2 },
+    { key: "markets", id: "pageMarkets", index: 3 },
+    { key: "home", id: "pageHome", index: 4 },
+    { key: "focus", id: "pageFocus", index: 5 },
+    { key: "world", id: "pageWorld", index: 6 },
+    { key: "event", id: "pageEvent", index: 7 },
+    { key: "quote", id: "pageQuote", index: 8 },
+    { key: "status", id: "pageStatus", index: 9 }
 ];
 
 let hydrating = false;
@@ -2306,7 +2312,7 @@ function refreshShowNowOptions() {
     const select = document.getElementById("showNowPage");
     const previous = select.value;
     select.innerHTML = "";
-    dashboardPageControls.forEach(({ id }, index) => {
+    dashboardPageControls.forEach(({ id, index }) => {
         const input = document.getElementById(id);
         if (!input.checked) {
             return;
