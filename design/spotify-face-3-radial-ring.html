@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><title>240x240 TFT - Spotify Player (Radial Ring Progress &amp; Round Dial)</title><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><script id="tailwind-config">tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+          "primary-fixed": "#c4e7ff",
+          "inverse-on-surface": "#2e3035",
+          "on-secondary-fixed-variant": "#653e00",
+          "error": "#ffb4ab",
+          "secondary": "#ffb95f",
+          "inverse-surface": "#e1e2e9",
+          "surface-tint": "#7bd0ff",
+          "primary-container": "#1DB954",
+          "on-primary-container": "#003314",
+          "on-tertiary": "#003824",
+          "on-secondary-container": "#5b3800",
+          "surface": "#111318",
+          "on-surface-variant": "#bdc8d1",
+          "surface-container": "#1d2024",
+          "outline-variant": "#3e484f",
+          "on-primary-fixed-variant": "#004c69",
+          "on-primary": "#00354a",
+          "surface-dim": "#111318",
+          "primary": "#1ed760",
+          "on-tertiary-fixed-variant": "#005236",
+          "surface-container-lowest": "#0c0e13",
+          "error-container": "#93000a",
+          "background": "#111318",
+          "on-error": "#690005",
+          "tertiary-fixed-dim": "#4edea3",
+          "on-surface": "#e1e2e9",
+          "tertiary-fixed": "#6ffbbe",
+          "secondary-fixed-dim": "#ffb95f",
+          "secondary-fixed": "#ffddb8",
+          "tertiary-container": "#1db954",
+          "on-tertiary-container": "#004e34",
+          "on-background": "#e1e2e9",
+          "surface-container-low": "#191c20",
+          "outline": "#87929a",
+          "inverse-primary": "#00668a",
+          "secondary-container": "#ee9800",
+          "on-primary-fixed": "#001e2c",
+          "surface-container-high": "#272a2f",
+          "on-secondary-fixed": "#2a1700",
+          "on-error-container": "#ffdad6",
+          "tertiary": "#1ed760",
+          "on-tertiary-fixed": "#002113",
+          "surface-bright": "#37393e",
+          "surface-variant": "#32353a",
+          "surface-container-highest": "#32353a",
+          "primary-fixed-dim": "#7bd0ff",
+          "on-secondary": "#472a00"
+        },
+        "borderRadius": {
+          "DEFAULT": "0.125rem",
+          "lg": "0.25rem",
+          "xl": "0.5rem",
+          "full": "0.75rem"
+        },
+        "spacing": {
+          "space-xs": "0.125rem",
+          "space-xl": "0.75rem",
+          "space-sm": "0.25rem",
+          "margin": "0.5rem",
+          "space-md": "0.375rem",
+          "space-lg": "0.5rem",
+          "gutter": "0.375rem"
+        },
+        "fontFamily": {
+          "label-md": ["JetBrains Mono"],
+          "label-lg": ["JetBrains Mono"],
+          "headline-md": ["JetBrains Mono"],
+          "body-lg": ["Inter"],
+          "body-md": ["Inter"],
+          "headline-lg": ["JetBrains Mono"],
+          "label-sm": ["JetBrains Mono"],
+          "headline-sm": ["JetBrains Mono"],
+          "body-sm": ["Inter"]
+        },
+        "fontSize": {
+          "label-md": ["9px", { "lineHeight": "12px", "letterSpacing": "0.06em", "fontWeight": "600" }],
+          "label-lg": ["11px", { "lineHeight": "14px", "letterSpacing": "0.04em", "fontWeight": "600" }],
+          "headline-md": ["18px", { "lineHeight": "22px", "letterSpacing": "-0.01em", "fontWeight": "700" }],
+          "body-lg": ["13px", { "lineHeight": "16px", "letterSpacing": "0em", "fontWeight": "500" }],
+          "body-md": ["11px", { "lineHeight": "14px", "letterSpacing": "0.01em", "fontWeight": "400" }],
+          "headline-lg": ["24px", { "lineHeight": "28px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+          "label-sm": ["8px", { "lineHeight": "10px", "letterSpacing": "0.08em", "fontWeight": "700" }],
+          "headline-sm": ["14px", { "lineHeight": "18px", "letterSpacing": "0em", "fontWeight": "600" }],
+          "body-sm": ["9px", { "lineHeight": "12px", "letterSpacing": "0.02em", "fontWeight": "500" }]
+        }
+      },
+    },
+  }</script></head><body class="bg-background font-body-md text-on-surface antialiased"><aside class="fixed left-0 top-0 h-full w-64 bg-surface-container-low z-50 flex flex-col justify-between p-space-lg"><div class="flex flex-col gap-space-lg"><div class="flex items-center gap-space-md px-space-sm py-space-xs bg-surface-container-lowest rounded"><div class="w-3 h-3 rounded-full bg-primary flex items-center justify-center"><div class="w-1.5 h-1.5 rounded-full bg-black animate-pulse"></div></div><div class="flex flex-col"><span class="font-label-lg text-label-lg text-primary uppercase">LAB BENCH S3</span><span class="font-label-sm text-label-sm text-on-surface-variant">HW REV 2.4 // ST7789/GC9A01</span></div></div><div class="flex flex-col gap-space-xs"><span class="font-label-sm text-label-sm text-outline uppercase tracking-wider px-space-sm">INSTRUMENT BUS</span><nav class="flex flex-col gap-space-xs"><a aria-current="page" class="flex items-center gap-space-md px-space-md py-space-sm rounded transition-colors bg-primary text-black font-bold" data-path="workbench-live-simulator" href="#"><span class="material-symbols-outlined text-[16px]">album</span><span class="font-label-lg text-label-lg uppercase">Spotify Radial Dial</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="telemetry-monitor" href="#"><span class="material-symbols-outlined text-[16px]">graphic_eq</span><span class="font-label-lg text-label-lg uppercase">Audio DMA Buffer</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="pinout-logic-matrix" href="#"><span class="material-symbols-outlined text-[16px]">developer_board</span><span class="font-label-lg text-label-lg uppercase">Pinout Matrix</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="firmware-rom-flasher" href="#"><span class="material-symbols-outlined text-[16px]">wifi</span><span class="font-label-lg text-label-lg uppercase">Spotify Web API</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors" data-path="signal-waveform-debugger" href="#"><span class="material-symbols-outlined text-[16px]">speed</span><span class="font-label-lg text-label-lg uppercase">SPI Bus Clock</span></a></nav></div><div class="p-space-md bg-surface-container rounded flex flex-col gap-space-xs"><div class="flex items-center justify-between"><span class="font-label-sm text-label-sm text-outline uppercase">CORE FREQ</span><span class="font-label-sm text-label-sm text-tertiary">240 MHz</span></div><div class="flex items-center justify-between"><span class="font-label-sm text-label-sm text-outline uppercase">SPI BAUD</span><span class="font-label-sm text-label-sm text-primary">80 MHz</span></div><div class="flex items-center justify-between"><span class="font-label-sm text-label-sm text-outline uppercase">DMA BUF SIZE</span><span class="font-label-sm text-label-sm text-tertiary">3.84 KB</span></div><div class="flex items-center justify-between"><span class="font-label-sm text-label-sm text-outline uppercase">PANEL SHAPE</span><span class="font-label-sm text-label-sm text-secondary" id="bench-panel-shape">HYBRID (SQ/RD)</span></div></div></div><div class="p-space-sm bg-surface-container-lowest rounded flex items-center justify-between"><div class="flex items-center gap-space-sm"><div class="w-2 h-2 rounded-full bg-primary animate-pulse"></div><span class="font-label-sm text-label-sm text-on-surface-variant uppercase">SPOTIFY CONNECT: ACTIVE</span></div><span class="font-label-sm text-label-sm text-primary">320kbps</span></div></aside><div class="pl-64"><header class="fixed top-0 left-64 right-0 z-40 bg-surface/80 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="h-14 w-full px-margin flex items-center justify-between"><div class="flex items-center gap-space-lg"><div class="flex items-center gap-space-sm px-space-sm py-space-xs bg-surface-container rounded"><span class="font-label-sm text-label-sm text-outline uppercase">CHIP:</span><span class="font-label-md text-label-md text-on-surface uppercase">ESP32-S3-WROOM-1</span></div><div class="flex items-center gap-space-sm px-space-sm py-space-xs bg-surface-container rounded"><span class="font-label-sm text-label-sm text-outline uppercase">DRIVER:</span><span class="font-label-md text-label-md text-primary uppercase">ST7789V2 / GC9A01</span></div><div class="hidden lg:flex items-center gap-space-sm px-space-sm py-space-xs bg-surface-container rounded"><span class="font-label-sm text-label-sm text-outline uppercase">AUDIO PROTOCOL:</span><span class="font-label-md text-label-md text-primary uppercase">SPOTIFY CONNECT CLIENT</span></div></div><div class="flex items-center gap-space-md"><div class="flex items-center gap-space-sm px-space-md py-space-xs bg-surface-container-high rounded"><span class="material-symbols-outlined text-[14px] text-primary">volume_up</span><span class="font-label-sm text-label-sm text-primary uppercase" id="top-vol-label">VOL 82%</span></div><div class="flex items-center gap-space-sm px-space-md py-space-xs bg-surface-container-high rounded"><span class="material-symbols-outlined text-[14px] text-secondary">thermostat</span><span class="font-label-sm text-label-sm text-secondary uppercase">CORE 37.1°C</span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-black text-[18px]">play_arrow</span></div></div></div></header><main class="w-full pt-14 bg-background min-h-screen"><div class="flex flex-col w-full">
+<!-- Workbench Header & Quick Actions -->
+<div class="px-space-lg py-space-md bg-surface-container flex flex-wrap items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-lg">
+<div class="flex items-center gap-space-sm">
+<span class="w-2.5 h-2.5 rounded-full bg-primary animate-pulse"></span>
+<span class="font-headline-sm text-headline-sm text-on-surface uppercase tracking-wider">SPOTIFY PLAYER // RADIAL RING &amp; ROUND DIAL (VARIANT 3)</span>
+</div>
+<div class="hidden md:flex items-center gap-space-xs px-space-md py-space-xs bg-surface-container-lowest rounded">
+<span class="font-label-sm text-label-sm text-outline">TARGET:</span>
+<span class="font-label-md text-label-md text-primary">ROUND/SQUARE 240x240</span>
+</div>
+<div class="hidden sm:flex items-center gap-space-xs px-space-md py-space-xs bg-surface-container-lowest rounded">
+<span class="font-label-sm text-label-sm text-outline">SCANLINE DMA:</span>
+<span class="font-label-md text-label-md text-tertiary">3.84 KB RAM (0-BITMAP TRIG DIAL)</span>
+</div>
+</div>
+<!-- Mode & Zoom Toggles -->
+<div class="flex items-center gap-space-md">
+<div class="flex items-center bg-surface-container-lowest rounded p-space-xs">
+<button class="px-space-md py-space-xs rounded font-label-md text-label-md bg-primary text-black font-bold uppercase transition-all" id="btn-zoom-1" onclick="setZoom(1)">1X [240px]</button>
+<button class="px-space-md py-space-xs rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface uppercase transition-all" id="btn-zoom-2" onclick="setZoom(2)">2X [480px]</button>
+<button class="px-space-md py-space-xs rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface uppercase transition-all" id="btn-zoom-3" onclick="setZoom(3)">3X [GRID]</button>
+</div>
+<button class="flex items-center gap-space-xs px-space-md py-space-xs bg-surface-container-high hover:bg-surface-bright rounded text-on-surface-variant hover:text-on-surface transition-all" id="btn-mask" onclick="toggleRoundMask()">
+<span class="material-symbols-outlined text-[14px] text-primary">circle</span>
+<span class="font-label-sm text-label-sm uppercase" id="mask-label">GC9A01 ROUND BEZEL</span>
+</button>
+<button class="flex items-center gap-space-xs px-space-md py-space-xs bg-surface-container-high hover:bg-surface-bright rounded text-on-surface-variant hover:text-on-surface transition-all" id="btn-crt" onclick="toggleCRTSheen()">
+<span class="material-symbols-outlined text-[14px] text-secondary">lens_blur</span>
+<span class="font-label-sm text-label-sm uppercase">GLASS SHEEN</span>
+</button>
+</div>
+</div>
+<!-- Primary Workbench Canvas -->
+<div class="grid grid-cols-1 xl:grid-cols-12 gap-space-md p-space-lg">
+<!-- Left: Hardware Physical Rig Viewport (8 Cols) -->
+<div class="xl:col-span-8 flex flex-col gap-space-md">
+<!-- Hardware Rig Presentation Shelf -->
+<div class="relative bg-surface-container-lowest rounded-xl p-space-xl flex flex-col items-center justify-center min-h-[580px] overflow-hidden">
+<!-- Ambient Circuit PCB Markings in Background -->
+<div class="absolute inset-0 pointer-events-none opacity-20 bg-[radial-gradient(#1ed760_1px,transparent_1px)] [background-size:16px_16px]"></div>
+<div class="absolute top-space-md left-space-md flex flex-col gap-space-xs pointer-events-none">
+<span class="font-label-sm text-label-sm text-outline">PCB SILK: ST7789_GC9A01_SPOTIFY_DIAL</span>
+<span class="font-label-sm text-label-sm text-outline-variant">GND VCC SCL SDA RES DC CS I2S_BCK I2S_DATA</span>
+</div>
+<div class="absolute top-space-md right-space-md flex items-center gap-space-md pointer-events-none">
+<span class="font-label-sm text-label-sm text-primary">RADIAL PROGRESS ENGINE: 360° SWEEP</span>
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-ping"></span>
+</div>
+<!-- Physical Hardware Module Bezel Container -->
+<div class="relative transition-all duration-300 ease-out bg-surface-container-high rounded-[28px] p-4 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9),inset_0_1px_2px_rgba(255,255,255,0.12),inset_0_-2px_4px_rgba(0,0,0,0.8)] flex items-center justify-center" id="hardware-bezel">
+<!-- Outer Glass Retainer & Matte Finish Bezel -->
+<div class="relative bg-[#05070b] p-3 rounded-[20px] shadow-[inset_0_0_12px_rgba(0,0,0,0.95)] transition-all duration-300" id="bezel-wrapper">
+<!-- Screen Spec Label on Bezel Screen Margin -->
+<div class="flex justify-between items-center px-1 pb-1">
+<span class="font-label-sm text-[7px] text-outline-variant tracking-widest uppercase" id="bezel-mode-tag">SPOTIFY RADIAL // HYBRID 240x240</span>
+<span class="font-label-sm text-[7px] text-primary tracking-widest uppercase">360° ARC RING</span>
+</div>
+<!-- EXACT 240x240 PHYSICAL SCREEN CONTAINER (Root of display logic) -->
+<div class="relative w-[240px] h-[240px] bg-[#000000] overflow-hidden select-none origin-center shadow-[inset_0_0_8px_rgba(0,0,0,0.9)] rounded-md transition-all duration-300" id="tft-display">
+<!-- Micro Pixel Grid Overlay (Active in 3x mode) -->
+<div class="absolute inset-0 pointer-events-none opacity-0 transition-opacity z-40 bg-[linear-gradient(to_right,#1ed76012_1px,transparent_1px),linear-gradient(to_bottom,#1ed76012_1px,transparent_1px)] [background-size:2px_2px]" id="pixel-grid"></div>
+<!-- Optical Glass Bezel Reflection Sheen (Toggleable) -->
+<div class="absolute inset-0 pointer-events-none z-30 opacity-70 bg-gradient-to-tr from-transparent via-white/[0.04] to-primary/[0.12]" id="glass-sheen"></div>
+<!-- ================================================================= -->
+<!-- VARIANT 3: SPOTIFY RADIAL RING PROGRESS & ROUND DIAL ENGINE -->
+<!-- Concentric circular gauge design: zero bitmap assets in flash/ram -->
+<!-- ================================================================= -->
+<div class="w-[240px] h-[240px] relative overflow-hidden bg-[#0a0c0e] text-white flex flex-col items-center justify-between p-2 select-none">
+<!-- MATHEMATICAL PERIMETER RADIAL ARCS (SVG Zero-Asset Canvas) -->
+<svg class="absolute inset-0 w-[240px] h-[240px] pointer-events-none z-0" viewbox="0 0 240 240">
+<defs>
+<!-- Spotify Vibrant Green Gradient for sweeping ring -->
+<lineargradient id="spotifyRingGrad" x1="0%" x2="100%" y1="0%" y2="100%">
+<stop offset="0%" stop-color="#1ed760"></stop>
+<stop offset="60%" stop-color="#1db954"></stop>
+<stop offset="100%" stop-color="#0e692f"></stop>
+</lineargradient>
+<!-- Vinyl Groove Radial Gradient -->
+<radialgradient cx="50%" cy="50%" id="vinylGroove" r="50%">
+<stop offset="0%" stop-color="#000000"></stop>
+<stop offset="45%" stop-color="#161a1e"></stop>
+<stop offset="65%" stop-color="#090b0d"></stop>
+<stop offset="85%" stop-color="#1a1e24"></stop>
+<stop offset="100%" stop-color="#050608"></stop>
+</radialgradient>
+</defs>
+<!-- Outer Track Background Circle (R=112, Circumference = 2*PI*112 = ~703.7) -->
+<circle cx="120" cy="120" fill="none" opacity="0.35" r="112" stroke="#22272e" stroke-width="6"></circle>
+<!-- Subtle Minute Marker Ticks around perimeter (60 ticks) -->
+<circle cx="120" cy="120" fill="none" opacity="0.3" r="117" stroke="#48535f" stroke-dasharray="1 11.3" stroke-width="1.5"></circle>
+<!-- 360-DEGREE PERIMETER RADIAL PROGRESS RING (Starts at 12 o'clock via transform rotate -90) -->
+<!-- Circumference = 703.7. 66% progress -> dasharray 703.7, offset = 703.7 * (1 - 0.66) = 239.2 -->
+<circle class="transition-all duration-700 ease-out" cx="120" cy="120" fill="none" id="svg-spotify-progress" r="112" stroke="url(#spotifyRingGrad)" stroke-dasharray="703.7" stroke-dashoffset="239.2" stroke-linecap="round" stroke-width="6" transform="rotate(-90 120 120)"></circle>
+<!-- Active Progress Needle Head Indicator -->
+<circle class="transition-all duration-700 ease-out" cx="120" cy="8" fill="#ffffff" id="svg-progress-head" r="3.5" stroke="#1db954" stroke-width="1.5" transform="rotate(238 120 120)"></circle>
+<!-- Concentric Volume / Level Inner Arc Indicator (Left side arc, R=98, 120deg to 240deg) -->
+<path d="M 45 169 A 98 98 0 0 1 45 71" fill="none" opacity="0.25" stroke="#323a44" stroke-linecap="round" stroke-width="2.5"></path>
+<path class="transition-all duration-500 ease-out" d="M 45 169 A 98 98 0 0 1 45 71" fill="none" id="svg-vol-arc" stroke="#1ed760" stroke-dasharray="140" stroke-dashoffset="25" stroke-linecap="round" stroke-width="2.5"></path>
+<!-- Concentric Hi-Fi Waveform/Equalizer Arc Indicator (Right side arc, R=98, -60deg to +60deg) -->
+<path d="M 195 71 A 98 98 0 0 1 195 169" fill="none" opacity="0.25" stroke="#323a44" stroke-linecap="round" stroke-width="2.5"></path>
+<path class="transition-all duration-500 ease-out" d="M 195 71 A 98 98 0 0 1 195 169" fill="none" id="svg-eq-arc" stroke="#1db954" stroke-dasharray="140" stroke-dashoffset="40" stroke-linecap="round" stroke-width="2"></path>
+<!-- Concentric Inner Center Vinyl Disc Base (R=72) -->
+<circle cx="120" cy="120" fill="url(#vinylGroove)" r="72" stroke="#1db954" stroke-opacity="0.25" stroke-width="1"></circle>
+<!-- Concentric Micro Vinyl Rings -->
+<circle cx="120" cy="120" fill="none" opacity="0.3" r="62" stroke="#2a323d" stroke-dasharray="8 3" stroke-width="0.75"></circle>
+<circle cx="120" cy="120" fill="none" opacity="0.25" r="50" stroke="#374151" stroke-width="0.75"></circle>
+<circle cx="120" cy="120" fill="#080a0d" opacity="0.9" r="38" stroke="#1db954" stroke-opacity="0.3" stroke-width="1"></circle>
+</svg>
+<!-- LAYER 1: TOP RADIAL STATUS (Spotify Connect & Hi-Fi indicator) -->
+<div class="relative z-10 w-full pt-1.5 flex items-center justify-between px-3">
+<!-- Volume Dial Pill Left -->
+<div class="flex items-center gap-1 bg-[#0c131f]/80 px-2 py-0.5 rounded-full border border-outline-variant/30">
+<span class="material-symbols-outlined text-[9px] text-primary">volume_up</span>
+<span class="font-headline-sm text-[8px] font-bold text-primary tracking-wider" id="tft-volume">82%</span>
+</div>
+<!-- Center Spotify Connect Status Badge -->
+<div class="flex items-center gap-1 px-2 py-0.5 bg-[#121820]/90 rounded-full border border-primary/40 shadow-[0_0_8px_rgba(29,185,84,0.15)]">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" id="tft-connect-dot"></span>
+<span class="font-headline-sm text-[7.5px] font-extrabold tracking-widest text-white uppercase" id="tft-connect-status">ONLINE • HI-FI</span>
+</div>
+<!-- Shuffle / Repeat Status Pill Right -->
+<div class="flex items-center gap-1 bg-[#0c131f]/80 px-2 py-0.5 rounded-full border border-outline-variant/30">
+<span class="material-symbols-outlined text-[9px] text-primary" id="tft-repeat-icon">repeat</span>
+<span class="font-label-sm text-[7.5px] font-bold text-on-surface-variant">FLAC</span>
+</div>
+</div>
+<!-- LAYER 2: CENTER VINYL GROOVES & ROTATING CENTER ARTIST TYPOGRAPHY -->
+<div class="relative z-10 flex flex-col items-center justify-center my-auto w-full px-4 text-center select-none">
+<!-- Glowing Vinyl Center Spindle / Artist Icon -->
+<div class="relative mb-1 flex items-center justify-center">
+<div class="w-8 h-8 rounded-full bg-gradient-to-tr from-[#12171e] via-[#1a232e] to-[#0c1015] border border-primary/50 flex items-center justify-center shadow-[0_0_12px_rgba(29,185,84,0.3)]">
+<span class="material-symbols-outlined text-[16px] text-primary transition-all duration-300" id="tft-genre-icon">graphic_eq</span>
+</div>
+</div>
+<!-- TRACK NAME (Prominent, High Contrast, Centered) -->
+<h1 class="font-headline-lg text-[18px] sm:text-[19px] font-extrabold text-white tracking-tight uppercase leading-none max-w-[190px] truncate drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]" id="tft-track">
+GET LUCKY
+</h1>
+<!-- ARTIST NAME (Crisp Secondary Contrast) -->
+<p class="font-headline-sm text-[9.5px] font-bold text-primary tracking-wider uppercase mt-1 max-w-[170px] truncate" id="tft-artist">
+DAFT PUNK ft. PHARRELL
+</p>
+<!-- ALBUM / GENRE TAG -->
+<div class="mt-1 flex items-center gap-1.5 px-2 py-0.5 bg-[#0e141a]/80 rounded-full border border-white/10">
+<span class="w-1 h-1 rounded-full bg-secondary"></span>
+<span class="font-label-sm text-[7px] text-on-surface-variant tracking-widest uppercase font-semibold" id="tft-album">RANDOM ACCESS MEMORIES</span>
+</div>
+</div>
+<!-- LAYER 3: BOTTOM RADIAL READOUT & TIME ELAPSED / PLAY STATUS -->
+<div class="relative z-10 w-full pb-1 px-3 flex flex-col items-center">
+<!-- Time Elapsed / Total Duration Indicator -->
+<div class="flex items-center justify-center gap-2 mb-1 px-2.5 py-0.5 bg-surface-container-high/80 rounded-full border border-outline-variant/40 shadow-sm">
+<span class="material-symbols-outlined text-[10px] text-primary">schedule</span>
+<span class="font-headline-sm text-[9px] font-extrabold text-white tracking-widest" id="tft-time-elapsed">02:45</span>
+<span class="text-[8px] text-outline">/</span>
+<span class="font-headline-sm text-[8px] font-bold text-outline-variant tracking-widest" id="tft-time-total">04:08</span>
+</div>
+<!-- Bottom Control & Tactile Play/Pause State -->
+<div class="w-full flex items-center justify-between text-[8px] font-headline-sm font-bold px-3">
+<div class="flex items-center gap-1 text-on-surface-variant cursor-pointer hover:text-white" onclick="prevTrack()">
+<span class="material-symbols-outlined text-[11px]">skip_previous</span>
+<span class="text-[7px] text-outline uppercase font-mono">PREV</span>
+</div>
+<div class="flex items-center gap-1 text-primary cursor-pointer hover:scale-105 transition-transform" id="btn-play-pause" onclick="togglePlayState()">
+<span class="material-symbols-outlined text-[14px] text-primary" id="tft-play-icon">pause_circle</span>
+<span class="text-[8px] tracking-wider uppercase font-bold text-primary" id="tft-playback-mode">PLAYING</span>
+</div>
+<div class="flex items-center gap-1 text-on-surface-variant cursor-pointer hover:text-white" onclick="nextTrack()">
+<span class="text-[7px] text-outline uppercase font-mono">NEXT</span>
+<span class="material-symbols-outlined text-[11px]">skip_next</span>
+</div>
+</div>
+</div>
+</div>
+<!-- ================================================================= -->
+</div>
+</div>
+<!-- Bottom Mounting Screw & Hardware Pins Indicator -->
+<div class="absolute -bottom-2 flex gap-6">
+<div class="w-2 h-2 rounded-full bg-surface-bright shadow-[inset_0_1px_1px_rgba(255,255,255,0.2)]"></div>
+<div class="w-2 h-2 rounded-full bg-surface-bright shadow-[inset_0_1px_1px_rgba(255,255,255,0.2)]"></div>
+</div>
+</div>
+<!-- Footer Coordinates on Screen Frame -->
+<div class="mt-space-lg flex items-center gap-space-lg font-label-sm text-label-sm text-outline">
+<span class="">COORDINATES: X0..239 Y0..239</span>
+<span class="">PIXEL CLOCK: 40.0MHz</span>
+<span class="text-primary font-bold">CIRCULAR PROGRESS 360° ARC (ZERO-BITMAP)</span>
+</div>
+</div>
+<!-- Live Signal Bus Analyzer Bar -->
+<div class="bg-surface-container rounded-lg p-space-md flex flex-wrap items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-lg">
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-outline">SPI MOSI (IO11)</span>
+<span class="font-label-md text-label-md text-primary font-bold">STREAMING ACTIVE</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-outline">I2S AUDIO DAC (IO12)</span>
+<span class="font-label-md text-label-md text-tertiary font-bold">44.1kHz / 16-BIT</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-outline">FRAME BUFFER RAM</span>
+<span class="font-label-md text-label-md text-tertiary font-bold">3.84 KB (8 LINES)</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-outline">ALGORITHM</span>
+<span class="font-label-md text-label-md text-secondary font-bold">TRIG RING / ZERO-PNG</span>
+</div>
+</div>
+<!-- Quick Refresh Flash Trigger -->
+<button class="flex items-center gap-space-xs px-space-md py-space-xs bg-primary text-black font-bold rounded hover:opacity-90 font-label-md text-label-md uppercase transition-all" onclick="flashRedraw()">
+<span class="material-symbols-outlined text-[14px]">refresh</span>
+<span class="">FORCE DMA FLUSH</span>
+</button>
+</div>
+</div>
+<!-- Right: Telemetry Controls & Firmware Code Snippet Generator (4 Cols) -->
+<div class="xl:col-span-4 flex flex-col gap-space-md">
+<!-- Scenario & Presets Card -->
+<div class="bg-surface-container rounded-lg p-space-md flex flex-col gap-space-sm">
+<div class="flex items-center justify-between pb-space-xs">
+<span class="font-headline-sm text-headline-sm text-on-surface uppercase">SPOTIFY TRACK PRESETS</span>
+<span class="font-label-sm text-label-sm text-outline">RADIAL RING SIM</span>
+</div>
+<div class="grid grid-cols-1 gap-space-xs">
+<!-- Preset 1: Daft Punk - Get Lucky -->
+<button class="w-full text-left p-space-sm rounded bg-surface-container-high hover:bg-surface-bright flex items-center justify-between transition-colors border-l-2 border-primary" onclick="loadTrackPreset('daftpunk')">
+<div class="flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-primary text-[20px]">album</span>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface font-bold uppercase">DAFT PUNK - GET LUCKY</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">02:45 / 04:08 (66% Ring) · Vol 82%</span>
+</div>
+</div>
+<span class="font-label-sm text-label-sm text-primary px-space-sm py-space-xs bg-surface-container-lowest rounded font-bold">LOAD</span>
+</button>
+<!-- Preset 2: Pink Floyd - Time -->
+<button class="w-full text-left p-space-sm rounded bg-surface-container-high hover:bg-surface-bright flex items-center justify-between transition-colors" onclick="loadTrackPreset('pinkfloyd')">
+<div class="flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-secondary text-[20px]">music_note</span>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface font-bold uppercase">PINK FLOYD - TIME</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">04:12 / 07:05 (59% Ring) · Dark Side</span>
+</div>
+</div>
+<span class="font-label-sm text-label-sm text-secondary px-space-sm py-space-xs bg-surface-container-lowest rounded font-bold">LOAD</span>
+</button>
+<!-- Preset 3: Miles Davis - So What -->
+<button class="w-full text-left p-space-sm rounded bg-surface-container-high hover:bg-surface-bright flex items-center justify-between transition-colors" onclick="loadTrackPreset('milesdavis')">
+<div class="flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-tertiary text-[20px]">radio</span>
+<div class="flex flex-col">
+<span class="font-label-md text-label-md text-on-surface font-bold uppercase">MILES DAVIS - SO WHAT</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">01:30 / 09:22 (16% Ring) · Kind of Blue</span>
+</div>
+</div>
+<span class="font-label-sm text-label-sm text-tertiary px-space-sm py-space-xs bg-surface-container-lowest rounded font-bold">LOAD</span>
+</button>
+</div>
+</div>
+<!-- Hardware Profile Specifications -->
+<div class="bg-surface-container rounded-lg p-space-md flex flex-col gap-space-xs">
+<span class="font-headline-sm text-headline-sm text-on-surface uppercase pb-space-xs">MCU MEMORY OPTIMIZATION SPECS</span>
+<div class="flex items-center justify-between py-space-xs bg-surface-container-lowest px-space-sm rounded">
+<span class="font-label-sm text-label-sm text-outline uppercase">DISPLAY PROFILE</span>
+<span class="font-label-sm text-label-sm text-primary font-bold">ST7789 (Sq) / GC9A01 (Rd) 240x240</span>
+</div>
+<div class="flex items-center justify-between py-space-xs bg-surface-container-lowest px-space-sm rounded">
+<span class="font-label-sm text-label-sm text-outline uppercase">SCANLINE BUFFER</span>
+<span class="font-label-sm text-label-sm text-tertiary font-bold">240 x 8 x 2 = 3,840 Bytes (SRAM)</span>
+</div>
+<div class="flex items-center justify-between py-space-xs bg-surface-container-lowest px-space-sm rounded">
+<span class="font-label-sm text-label-sm text-outline uppercase">GRAPHIC ASSETS</span>
+<span class="font-label-sm text-label-sm text-secondary font-bold">0 KB Bitmap Assets (Trigonometric Arcs)</span>
+</div>
+<div class="flex items-center justify-between py-space-xs bg-surface-container-lowest px-space-sm rounded">
+<span class="font-label-sm text-label-sm text-outline uppercase">RING COMPUTATION</span>
+<span class="font-label-sm text-label-sm text-tertiary font-bold">Polar-to-Cartesian 360° Sweep @ 60fps</span>
+</div>
+<div class="flex items-center justify-between py-space-xs bg-surface-container-lowest px-space-sm rounded">
+<span class="font-label-sm text-label-sm text-outline uppercase">DMA FLUSH SPEED</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant font-bold">16.6ms per full frame @ 80MHz</span>
+</div>
+</div>
+<!-- C++ Embedded Driver Code Export -->
+<div class="bg-surface-container rounded-lg p-space-md flex flex-col gap-space-xs flex-1">
+<div class="flex items-center justify-between pb-space-xs">
+<span class="font-headline-sm text-headline-sm text-on-surface uppercase">C++ SPOTIFY RADIAL RING SNIPPET</span>
+<button class="font-label-sm text-label-sm text-primary flex items-center gap-1 hover:underline" id="btn-copy" onclick="copySnippet()">
+<span class="material-symbols-outlined text-[12px]">content_copy</span>
+<span class="">COPY</span>
+</button>
+</div>
+<div class="p-space-sm bg-surface-container-lowest rounded overflow-x-auto text-[10px] font-label-md leading-relaxed text-on-surface-variant">
+<pre class="font-mono text-[10px] leading-tight text-on-surface-variant"><span class="text-secondary">#include</span> &lt;LovyanGFX.hpp&gt;
+
+<span class="text-outline">// 3.84KB Scanline DMA Buffer (240x8 lines)</span>
+<span class="text-primary">static</span> LGFX lcd;
+<span class="text-primary">static</span> LGFX_Sprite lineBuf(&amp;lcd);
+
+<span class="text-primary">void</span> renderSpotifyDial(<span class="text-primary">float</span> progressPct, <span class="text-primary">int</span> volume) {
+  <span class="text-outline">// Zero PNGs in flash: Pure trigonometric Bresenham arcs</span>
+  lcd.startWrite();
+  
+  <span class="text-outline">// 1. Outer 360° Progress Track &amp; Spotify Green Arc</span>
+  lcd.drawArc(120, 120, 114, 110, 0, 360, 0x2124); <span class="text-outline">// Dark track</span>
+  <span class="text-primary">float</span> endAngle = 270.0f + (progressPct * 360.0f); <span class="text-outline">// Starts 12 o'clock</span>
+  lcd.drawArc(120, 120, 114, 110, 270, (int)endAngle % 360, 0x1DB954);
+
+  <span class="text-outline">// 2. Progress Needle Head via Polar Coordinates</span>
+  <span class="text-primary">float</span> rad = radians(endAngle);
+  <span class="text-primary">int</span> headX = 120 + 112 * cos(rad);
+  <span class="text-primary">int</span> headY = 120 + 112 * sin(rad);
+  lcd.fillCircle(headX, headY, 3, TFT_WHITE);
+
+  <span class="text-outline">// 3. Inner Vinyl Grooves &amp; Volume Level Arc</span>
+  lcd.drawCircle(120, 120, 72, 0x1217);
+  lcd.drawArc(120, 120, 98, 96, 120, 120 + (volume * 1.2), TFT_GREEN);
+
+  <span class="text-outline">// 4. Crisp High-Contrast Typography</span>
+  lcd.setTextDatum(MC_DATUM);
+  lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+  lcd.drawString(<span class="text-tertiary">"GET LUCKY"</span>, 120, 115);
+  lcd.setTextColor(0x1DB954, TFT_BLACK);
+  lcd.drawString(<span class="text-tertiary">"DAFT PUNK"</span>, 120, 132);
+
+  lcd.endWrite();
+}</pre>
+</div>
+<div class="flex items-center justify-between text-outline font-label-sm text-label-sm pt-space-xs">
+<span class="">SCANLINE SRAM: 3,840 BYTES</span>
+<span class="text-primary font-bold">FLASH USAGE: 5.8% (NO BITMAPS)</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Interactive JavaScript Handling Simulator Toggles & Presets -->
+<script>
+    let currentZoom = 1;
+    let glassSheenEnabled = true;
+    let isRoundMask = false;
+    let isPlaying = true;
+    let currentPreset = 'daftpunk';
+
+    function setZoom(level) {
+      currentZoom = level;
+      const display = document.getElementById('tft-display');
+      const pixelGrid = document.getElementById('pixel-grid');
+      const b1 = document.getElementById('btn-zoom-1');
+      const b2 = document.getElementById('btn-zoom-2');
+      const b3 = document.getElementById('btn-zoom-3');
+
+      [b1, b2, b3].forEach(b => {
+        b.className = "px-space-md py-space-xs rounded font-label-md text-label-md text-on-surface-variant hover:text-on-surface uppercase transition-all";
+      });
+
+      if (level === 1) {
+        display.style.transform = 'scale(1)';
+        pixelGrid.classList.add('opacity-0');
+        pixelGrid.classList.remove('opacity-100');
+        b1.className = "px-space-md py-space-xs rounded font-label-md text-label-md bg-primary text-black font-bold uppercase transition-all";
+      } else if (level === 2) {
+        display.style.transform = 'scale(1.75)';
+        pixelGrid.classList.add('opacity-0');
+        pixelGrid.classList.remove('opacity-100');
+        b2.className = "px-space-md py-space-xs rounded font-label-md text-label-md bg-primary text-black font-bold uppercase transition-all";
+      } else if (level === 3) {
+        display.style.transform = 'scale(2.2)';
+        pixelGrid.classList.remove('opacity-0');
+        pixelGrid.classList.add('opacity-100');
+        b3.className = "px-space-md py-space-xs rounded font-label-md text-label-md bg-primary text-black font-bold uppercase transition-all";
+      }
+    }
+
+    function toggleCRTSheen() {
+      glassSheenEnabled = !glassSheenEnabled;
+      const sheen = document.getElementById('glass-sheen');
+      sheen.style.opacity = glassSheenEnabled ? '0.7' : '0';
+    }
+
+    function toggleRoundMask() {
+      isRoundMask = !isRoundMask;
+      const display = document.getElementById('tft-display');
+      const bezelWrapper = document.getElementById('bezel-wrapper');
+      const maskLabel = document.getElementById('mask-label');
+      const shapeTag = document.getElementById('bench-panel-shape');
+      const bezelTag = document.getElementById('bezel-mode-tag');
+
+      if (isRoundMask) {
+        display.classList.remove('rounded-md');
+        display.classList.add('rounded-full');
+        bezelWrapper.classList.remove('rounded-[20px]');
+        bezelWrapper.classList.add('rounded-full');
+        maskLabel.textContent = "ST7789 SQUARE BEZEL";
+        shapeTag.textContent = "GC9A01 CIRCULAR";
+        bezelTag.textContent = "GC9A01 ROUND 240x240";
+      } else {
+        display.classList.remove('rounded-full');
+        display.classList.add('rounded-md');
+        bezelWrapper.classList.remove('rounded-full');
+        bezelWrapper.classList.add('rounded-[20px]');
+        maskLabel.textContent = "GC9A01 ROUND BEZEL";
+        shapeTag.textContent = "HYBRID (SQ/RD)";
+        bezelTag.textContent = "SPOTIFY RADIAL // HYBRID 240x240";
+      }
+    }
+
+    function flashRedraw() {
+      const display = document.getElementById('tft-display');
+      display.style.filter = 'brightness(1.5) contrast(1.1)';
+      setTimeout(() => {
+        display.style.filter = 'none';
+      }, 120);
+    }
+
+    function togglePlayState() {
+      isPlaying = !isPlaying;
+      const playIcon = document.getElementById('tft-play-icon');
+      const modeText = document.getElementById('tft-playback-mode');
+      const connDot = document.getElementById('tft-connect-dot');
+
+      if (isPlaying) {
+        playIcon.textContent = 'pause_circle';
+        modeText.textContent = 'PLAYING';
+        connDot.className = 'w-1.5 h-1.5 rounded-full bg-primary animate-pulse';
+      } else {
+        playIcon.textContent = 'play_circle';
+        modeText.textContent = 'PAUSED';
+        connDot.className = 'w-1.5 h-1.5 rounded-full bg-secondary';
+      }
+    }
+
+    const trackData = {
+      daftpunk: {
+        track: "GET LUCKY",
+        artist: "DAFT PUNK ft. PHARRELL",
+        album: "RANDOM ACCESS MEMORIES",
+        elapsed: "02:45",
+        total: "04:08",
+        progress: 0.665,
+        volume: "82%",
+        volArcOffset: "25",
+        icon: "album"
+      },
+      pinkfloyd: {
+        track: "TIME",
+        artist: "PINK FLOYD",
+        album: "THE DARK SIDE OF THE MOON",
+        elapsed: "04:12",
+        total: "07:05",
+        progress: 0.592,
+        volume: "75%",
+        volArcOffset: "38",
+        icon: "hourglass_top"
+      },
+      milesdavis: {
+        track: "SO WHAT",
+        artist: "MILES DAVIS",
+        album: "KIND OF BLUE (1959)",
+        elapsed: "01:30",
+        total: "09:22",
+        progress: 0.160,
+        volume: "64%",
+        volArcOffset: "55",
+        icon: "radio"
+      }
+    };
+
+    function loadTrackPreset(name) {
+      flashRedraw();
+      currentPreset = name;
+      const data = trackData[name];
+      if (!data) return;
+
+      document.getElementById('tft-track').textContent = data.track;
+      document.getElementById('tft-artist').textContent = data.artist;
+      document.getElementById('tft-album').textContent = data.album;
+      document.getElementById('tft-time-elapsed').textContent = data.elapsed;
+      document.getElementById('tft-time-total').textContent = data.total;
+      document.getElementById('tft-volume').textContent = data.volume;
+      document.getElementById('top-vol-label').textContent = `VOL ${data.volume}`;
+      document.getElementById('tft-genre-icon').textContent = data.icon;
+
+      // Update SVG Progress Ring (circumference = 703.7)
+      const circumference = 703.7;
+      const offset = circumference * (1 - data.progress);
+      const ring = document.getElementById('svg-spotify-progress');
+      ring.setAttribute('stroke-dashoffset', offset.toFixed(1));
+
+      // Update Needle Head Angle
+      const deg = Math.round(data.progress * 360);
+      const needle = document.getElementById('svg-progress-head');
+      needle.setAttribute('transform', `rotate(${deg} 120 120)`);
+
+      // Update volume arc
+      document.getElementById('svg-vol-arc').setAttribute('stroke-dashoffset', data.volArcOffset);
+    }
+
+    function nextTrack() {
+      const keys = Object.keys(trackData);
+      const idx = keys.indexOf(currentPreset);
+      const nextKey = keys[(idx + 1) % keys.length];
+      loadTrackPreset(nextKey);
+    }
+
+    function prevTrack() {
+      const keys = Object.keys(trackData);
+      const idx = keys.indexOf(currentPreset);
+      const prevKey = keys[(idx - 1 + keys.length) % keys.length];
+      loadTrackPreset(prevKey);
+    }
+
+    function copySnippet() {
+      const btn = document.getElementById('btn-copy');
+      navigator.clipboard.writeText(`// ESP32-S3 + ST7789 / GC9A01 Spotify Radial Dial (3.84KB RAM)
+#include <LovyanGFX.hpp>
+
+static LGFX lcd;
+void renderSpotifyDial(float progressPct, int volume) {
+  lcd.startWrite();
+  lcd.drawArc(120, 120, 114, 110, 0, 360, 0x2124);
+  float endAngle = 270.0f + (progressPct * 360.0f);
+  lcd.drawArc(120, 120, 114, 110, 270, (int)endAngle % 360, 0x1DB954);
+  lcd.setTextDatum(MC_DATUM);
+  lcd.drawString("GET LUCKY", 120, 115);
+  lcd.endWrite();
+}`);
+      btn.innerHTML = `<span class="material-symbols-outlined text-[12px]">check</span><span>COPIED</span>`;
+      setTimeout(() => {
+        btn.innerHTML = `<span class="material-symbols-outlined text-[12px]">content_copy</span><span>COPY</span>`;
+      }, 1500);
+    }
+  </script>
+</div></main></div>
+</body></html>
