@@ -862,6 +862,9 @@ void loop() {
     }
 
 
+    // Self-gating: returns immediately unless the text face is the visible page.
+    displaySpotifyEqualizerTick();
+
     if (millis() - lastDisplayUpdate >= DISPLAY_UPDATE_INTERVAL) {
         if (!displayState.showImage) {
             displayUpdate();

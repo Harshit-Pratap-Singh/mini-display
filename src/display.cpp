@@ -43,6 +43,7 @@ constexpr uint16_t kSpText      = rgb565(0xe1, 0xe2, 0xe9);  // #e1e2e9 on-surfa
 constexpr uint16_t kSpMuted     = rgb565(0x87, 0x92, 0x9a);  // #87929a outline
 constexpr uint16_t kSpMint      = rgb565(0x56, 0xe5, 0xa9);  // #56e5a9 tertiary
 constexpr uint16_t kSpCyan      = rgb565(0x38, 0xbd, 0xf8);  // #38bdf8 primary
+constexpr uint16_t kSpDim       = rgb565(0x32, 0x35, 0x3a);  // #32353a unlit segment
 
 constexpr int kArtBox = 80;   // the mockup's art slot
 constexpr int kArtX = 8;
@@ -2696,55 +2697,65 @@ void renderPhotosPage() {
 // touches TJpg or /art.jpg, so it costs nothing on a board with 2 KB of DRAM free
 // during a poll.
 
-// The mockup puts a seven-channel spectrum analyser across the top. The device has no
-// audio, so those bars would be animating invented numbers. Same visual language, real
-// quantities: signal, both heaps as they were during the poll, and round-trip time.
-void drawSpotifyMeters(bool valuesOnly) {
+// The mockup's seven-channel equaliser, built from stacked blocks. These bars are NOT
+// audio: this device has no sound, it only reports what is playing elsewhere, and the
+// Web API sends no spectrum data. They are an animation, chosen deliberately over the
+// real telemetry that used to sit here - face 1 still carries that. The one thing they
+// do tell the truth about is playback: they settle flat when paused.
+constexpr uint8_t kEqColumns = 7;
+constexpr uint8_t kEqSegments = 8;
+uint8_t eqLevel[kEqColumns];
+unsigned long lastEqTickMs = 0;
+// The page tick is 500 ms, which would make this a slideshow rather than a visualiser,
+// so the equaliser runs on its own clock outside the hash-driven redraw.
+constexpr unsigned long kEqTickMs = 80;
+
+void tickEqualizerLevels() {
+    for (uint8_t column = 0; column < kEqColumns; ++column) {
+        if (!spotifyRuntime.playing) {
+            if (eqLevel[column] > 0) {
+                eqLevel[column]--;  // settle flat rather than freezing mid-bounce
+            }
+            continue;
+        }
+        // Left columns swing higher and fall slower, like bass; the right flickers.
+        uint8_t ceiling = kEqSegments - (column / 3);
+        uint8_t target = static_cast<uint8_t>(random(1, ceiling + 1));
+        if (target > eqLevel[column]) {
+            eqLevel[column] = target;  // attack jumps straight to the peak
+        } else if (eqLevel[column] > 0) {
+            eqLevel[column]--;         // decay falls one block at a time
+        }
+    }
+}
+
+void drawSpotifyEqualizer(bool full) {
     const int panelY = 22;
     const int panelH = 68;
-    const int count = 4;
-    const int slotW = kBarW / count;
+    const int segH = 6;
+    const int segGap = 2;
+    const int colGap = 5;
+    const int inset = 6;
+    const int usable = kBarW - inset * 2;
+    const int colW = (usable - colGap * (kEqColumns - 1)) / kEqColumns;
+    const int startX = kBarX + inset +
+                       (usable - (colW * kEqColumns + colGap * (kEqColumns - 1))) / 2;
+    const int bottomY = panelY + panelH - 4;
 
-    if (!valuesOnly) {
+    if (full) {
         drawRoundedPanel(kBarX, panelY, kBarW, panelH, kSpPanel, kSpPanel);
     }
 
-    const char *labels[count] = {"WIFI", "DRAM", "IRAM", "POLL"};
-    const uint16_t colors[count] = {kSpCyan, kSpMint, kSpGreen, kSpAmber};
-
-    // Each reading mapped to 0-100 against a ceiling that means something on this board:
-    // -30 dBm is excellent and -90 unusable; 8 KB of DRAM free during a poll would be
-    // luxurious; IRAM starts around 18 KB; a poll under 2.5 s is the best we ever see.
-    int rssi = WiFi.RSSI();
-    int percent[count];
-    percent[0] = constrain((rssi + 90) * 100 / 60, 0, 100);
-    percent[1] = constrain(static_cast<int>(spotifyRuntime.lastPollDramBytes / 82), 0, 100);
-    percent[2] = constrain(static_cast<int>(spotifyRuntime.lastPollIramBytes / 184), 0, 100);
-    percent[3] = constrain(100 - (spotifyRuntime.lastPollLatencyMs / 25), 0, 100);
-
-    char value[count][12];
-    snprintf(value[0], sizeof(value[0]), "%d", rssi);
-    snprintf(value[1], sizeof(value[1]), "%uk",
-             static_cast<unsigned>(spotifyRuntime.lastPollDramBytes / 1024U));
-    snprintf(value[2], sizeof(value[2]), "%uk",
-             static_cast<unsigned>(spotifyRuntime.lastPollIramBytes / 1024U));
-    snprintf(value[3], sizeof(value[3]), "%u", spotifyRuntime.lastPollLatencyMs);
-
-    const int barTop = panelY + 18;
-    const int barHeight = 30;
-    for (int i = 0; i < count; ++i) {
-        int centreX = kBarX + slotW * i + slotW / 2;
-        if (!valuesOnly) {
-            drawPaddedText(labels[i], centreX, panelY + 5, TC_DATUM, FONT_INFO, 0,
-                           kSpMuted, kSpPanel);
+    for (uint8_t column = 0; column < kEqColumns; ++column) {
+        int x = startX + column * (colW + colGap);
+        for (uint8_t segment = 0; segment < kEqSegments; ++segment) {
+            int y = bottomY - (segment + 1) * segH - segment * segGap;
+            uint16_t color = kSpDim;
+            if (segment < eqLevel[column]) {
+                color = (segment >= 6) ? kSpAmber : (segment >= 4) ? kSpCyan : kSpMint;
+            }
+            tft.fillRect(x, y, colW, segH, color);
         }
-        // Vertical bar, filled from the bottom like a level meter.
-        int barW = 18;
-        int filled = (barHeight * percent[i]) / 100;
-        tft.fillRect(centreX - barW / 2, barTop, barW, barHeight - filled, kSpSurface);
-        tft.fillRect(centreX - barW / 2, barTop + barHeight - filled, barW, filled, colors[i]);
-        drawPaddedText(value[i], centreX, barTop + barHeight + 4, TC_DATUM, FONT_INFO,
-                       slotW - 6, kSpText, kSpPanel);
     }
 }
 
@@ -2769,7 +2780,6 @@ void drawSegmentedProgress() {
 }
 
 void drawFace2Dynamic() {
-    drawSpotifyMeters(true);
     drawSegmentedProgress();
 
     uint32_t progress = spotifyProgressMs();
@@ -2792,7 +2802,7 @@ void renderSpotifyFaceText() {
     drawPaddedText(spotifyRuntime.playing ? "PLAYING" : "PAUSED", 232, 5, TR_DATUM,
                    FONT_INFO, 0, spotifyRuntime.playing ? kSpMint : kSpAmber, kSpBar);
 
-    drawSpotifyMeters(false);
+    drawSpotifyEqualizer(true);
 
     // The mockup shows "TRACK // 04" and "FLAC - 24-BIT" here. Queue position, codec and
     // bit depth are all absent from the Web API, so the row carries what is real.
@@ -3356,6 +3366,22 @@ void renderDashboardPageCached() {
 }
 
 }  // namespace
+
+// Runs straight from loop(): the equaliser needs ~12 fps and the page tick gives 2.
+void displaySpotifyEqualizerTick() {
+    if (dashboardConfig.spotifyFace != DASHBOARD_SPOTIFY_FACE_TEXT ||
+        displayState.currentPage != DASHBOARD_PAGE_SPOTIFY ||
+        displayState.showImage || displayState.apMode) {
+        return;
+    }
+    if (millis() - lastEqTickMs < kEqTickMs) {
+        return;
+    }
+    lastEqTickMs = millis();
+    tickEqualizerLevels();
+    drawSpotifyEqualizer(false);
+}
+
 
 void setBacklightLevel(int brightness, bool shouldLog = true) {
     int boundedBrightness = constrain(brightness, 0, 100);

@@ -39,6 +39,10 @@ void displayShowMessage(const String &msg);
 void displayShowTemporaryMessage(const String &msg, uint32_t durationMs);
 void displayShowAPScreen(const char* ssid, const char* password, const char* ip);
 void displayBlankScreen();
+// Drives the face-2 equaliser animation. Called from loop() rather than the 500 ms page
+// tick, which would render it as a slideshow.
+void displaySpotifyEqualizerTick();
+
 // Preferred way to change currentPage (render fallbacks and config-save handlers still assign it directly).
 // Refuses (false) in AP mode, while a temporary message is up, or if the page is not enabled/has no content.
 bool displaySetPage(uint8_t page, bool smoothTransition = false);
