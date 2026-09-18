@@ -531,3 +531,42 @@ let the art arrive as raw pixels — no download, no decode, no flash write. It 
 because it breaks the project's first requirement, "runs standalone: no PC needed at
 runtime", and the adaptive interval already took the steady state from 28% to ~9%. Revisit
 only if a future stage needs second-by-second accuracy.
+
+## Serial monitoring resets the board — and two resets means recovery mode (2026-09-18)
+
+Cost an hour of false debugging, so read this before attaching a monitor.
+
+**DTR/RTS on the CH340 are wired to RESET and GPIO0.** That is what makes `pio run -t
+upload` flash without holding a button, and it means **every open *and* every close of the
+serial port reboots the board**. An ordinary `pio device monitor` session is therefore two
+reboots, not zero.
+
+Two firmware counters react to that, and both live in `src/settings.cpp`:
+
+| Counter | Threshold | What happens | Clears |
+|---|---|---|---|
+| Boot failure (`bootCounterShouldEnterRecovery`) | **2** | **Recovery mode** | 30 s of running (`kBootSuccessConfirmMs`) |
+| Power cycle (`POWER_CYCLE_THRESHOLD`) | **5** | **FACTORY RESET** — wipes WiFi and Spotify credentials | same successful boot |
+
+**Recovery mode disables `spotifyLoop()` and `feedsLoop()` outright** (`main.cpp`, the
+`!recoveryBootMode` guard). The display still works, so the symptom is a Spotify page that
+renders but never populates — which looks exactly like broken new code. Check the boot
+banner for `RECOVERY MODE` before debugging anything else. `recoveryBootMode` is latched
+for the whole session, so clearing the counter is not enough; it needs one more clean boot.
+
+**Monitor without resetting.** Set DTR and RTS false *before* `open()` and again after,
+then again before `close()`:
+
+```python
+s = serial.Serial(); s.port = port; s.baudrate = 115200; s.timeout = 1
+s.dtr = False; s.rts = False
+s.open()
+s.dtr = False; s.rts = False      # macOS re-asserts on open
+```
+
+The working script is in the session scratchpad as `cap2.py`. `pio device monitor` has no
+equivalent switch, so prefer the script when the board must keep running.
+
+**If a factory reset ever does fire:** WiFi is re-entered through the failsafe AP
+`SmartClock-Setup`, but the Spotify client ID, secret and refresh token are gone and
+`tools/spotify_auth.py` has to be run again. Keep a copy in `secrets/` (git-ignored).
