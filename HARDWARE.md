@@ -458,3 +458,76 @@ and leaves IRAM headroom. 16384 works but takes 17.4 KB of an 18.9 KB IRAM heap.
   false while the response is still buffered locally. Getting this wrong cost two probe
   rounds: the same configuration read 637 bytes, then 26, then none, and it looked like a
   buffer-size failure rather than a race with the close.
+
+## Milestone 6 stage 2–3 — poll cadence and album art, measured on hardware 2026-09-18
+
+Flashed build: Flash 722,551 B (69.2%), RAM 55,372 B (67.6%). Free DRAM after all
+services start: **16,472 B** — that is the budget every TLS connection lives inside.
+
+### A poll blocks loop() for ~1.4 s and nothing removes it
+The ESP8266 runs one `loop()` with no scheduler, so a blocking call freezes the display,
+the clock and the web server for its full duration.
+
+| Measure | Result |
+|---|---|
+| Poll, full handshake | 2,634 ms |
+| Poll, `BearSSL::Session` resumed (184 B RAM) | 1,572 ms max, ~1,400 ms typical |
+| Hammer test, loop block | median 59 ms, p90 156 ms, **max 1,572 ms** |
+| Heap during live parses | steady ~15,984 B, no leak |
+
+The residue is the ECDHE key exchange on an 80 MHz core with no crypto acceleration.
+Caching removes the rest; nothing removes that.
+
+**So the poll interval adapts instead of running fast** (`nextPollDelayMs()`), because the
+progress bar interpolates locally and only *changes* need the network:
+
+| State | Interval | Duty cycle |
+|---|---|---|
+| Idle | 30 s | ~5% |
+| Playing, mid-track | 15 s | ~9% |
+| Last 20 s of a track | 5 s | ~28%, briefly, where it buys something |
+
+A flat 5 s poll would have been ~28% blocked forever. `/spotify.json` exposes
+`nextPollInMs` so the cadence is observable from a browser without a serial cable.
+
+### Album art: the handshake dominates, not the image size
+Three downloads on the real device, different albums:
+
+| Bytes | Total | Implied handshake at ~32 KB/s |
+|---|---|---|
+| 45,072 | 2,798 ms | ~1,420 ms — full |
+| 23,800 | 829 ms | ~100 ms — **session resumed** |
+| 19,472 | 2,076 ms | ~1,480 ms — full |
+
+Transfer rate is a consistent **~32 KB/s**. The only variable is whether the TLS session
+resumed, and **it resumed once in three**: `i.scdn.co` is a CDN and a session is valid
+only on the node that issued it, so repeat requests mostly miss. The API host resumes
+reliably; the image CDN does not. Do not assume otherwise from one fast sample — that
+mistake was made here and the third data point refuted it.
+
+**Budget ~2.7 s per track change.** On a 3½-minute song that is ~1.3% of playback and it
+lands at the track change, when the screen is already transitioning.
+
+**Keep the ≤300 px image, not the 64×64** that an earlier CLAUDE.md note preferred. Since
+the handshake is paid whatever the size, dropping to 64×64 saves only the ~1.2 s transfer,
+not the ~1.4 s handshake — a blurry thumbnail for less than half the saving it appears to
+offer. `showArt` remains the switch if art is not wanted at all.
+
+### Rules this stage added
+- **One TLS connection at a time, one per pass of `loop()`.** `spotifyLoop()` does the art
+  download on a *different* pass from the track poll. Two at once does not fit in 16 KB.
+- **Stream to LittleFS, never to RAM.** 512 B at a time; 40 KB has nowhere else to go.
+- **Verify the body against `Content-Length` and delete a short read.** A truncated JPEG
+  decodes to garbage; failing loudly beats drawing half an image.
+- **Give up after 3 failures on one track.** A URL that 404s will not start working and
+  each retry costs another handshake.
+- `tools/test_spotify_url.cpp` — the URL parser writes network bytes into a fixed buffer,
+  so it is compiled and run on the PC: `c++ -std=c++17 -o /tmp/t tools/test_spotify_url.cpp
+  && /tmp/t`. It caught an inverted boundary assertion on its first run.
+
+### The helper-computer fallback, and why it stays unbuilt
+A PC/Pi doing the HTTPS and serving plain HTTP on the LAN would cut a poll to ~5–30 ms and
+let the art arrive as raw pixels — no download, no decode, no flash write. It is not built
+because it breaks the project's first requirement, "runs standalone: no PC needed at
+runtime", and the adaptive interval already took the steady state from 28% to ~9%. Revisit
+only if a future stage needs second-by-second accuracy.

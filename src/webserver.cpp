@@ -4,6 +4,7 @@
 #include "dashboard.h"
 #include "display.h"
 #include "feeds.h"
+#include "spotify.h"
 #include "auth.h"
 #include "logger.h"
 #include "settings.h"
@@ -902,6 +903,30 @@ void handleFeedsLive() {
     sendTextResponse(200, "OK");
 }
 
+// GET /spotify.json - config (never the secret or refresh token) plus live state.
+void handleSpotifyJson() {
+    String config;
+    String status;
+    spotifyBuildConfigJson(config);
+    spotifyBuildStatusJson(status);
+    sendJsonResponse(200, "{\"config\":" + config + ",\"status\":" + status + "}");
+}
+
+// POST /spotify/save - credentials and settings. Omitting clientSecret/refreshToken
+// leaves the stored values alone, so saving a toggle cannot wipe them.
+void handleSpotifySave() {
+    if (!server.hasArg("plain")) {
+        sendTextResponse(400, "Missing JSON body");
+        return;
+    }
+    String error;
+    if (!spotifyApplyConfigJson(server.arg("plain"), &error)) {
+        sendTextResponse(400, error.length() > 0 ? error : "Invalid Spotify config");
+        return;
+    }
+    sendTextResponse(200, "OK");
+}
+
 void handleFeedsSave() {
     String error;
     if (server.hasArg("plain")) {
@@ -1286,6 +1311,8 @@ void webserverInit() {
     registerProtectedRoute("/dashboard/reset", HTTP_POST, handleDashboardReset);
     registerProtectedRoute("/feeds/live", HTTP_POST, handleFeedsLive);
     registerProtectedRoute("/feeds/save", HTTP_POST, handleFeedsSave);
+    registerProtectedRoute("/spotify.json", HTTP_GET, handleSpotifyJson);
+    registerProtectedRoute("/spotify/save", HTTP_POST, handleSpotifySave);
     registerProtectedRoute("/feeds/discard", HTTP_POST, handleFeedsDiscard);
     registerProtectedRoute("/feeds/reset", HTTP_POST, handleFeedsReset);
     registerProtectedRoute("/feeds/sync", HTTP_POST, handleFeedsSync);

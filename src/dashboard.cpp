@@ -414,6 +414,7 @@ void fillConfigJson(JsonObject root) {
     JsonObject pages = root["pages"].to<JsonObject>();
     pages["clock"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_CLOCK];
     pages["photos"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_PHOTOS];
+    pages["spotify"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_SPOTIFY];
     pages["markets"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_MARKETS];
     pages["home"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_HOME];
     pages["focus"] = dashboardConfig.enabledPages[DASHBOARD_PAGE_FOCUS];
@@ -489,6 +490,9 @@ void applyPagesObject(JsonObjectConst pages) {
     }
     if (!pages["photos"].isNull()) {
         dashboardConfig.enabledPages[DASHBOARD_PAGE_PHOTOS] = pages["photos"].as<bool>();
+    }
+    if (!pages["spotify"].isNull()) {
+        dashboardConfig.enabledPages[DASHBOARD_PAGE_SPOTIFY] = pages["spotify"].as<bool>();
     }
     if (!pages["markets"].isNull()) {
         dashboardConfig.enabledPages[DASHBOARD_PAGE_MARKETS] = pages["markets"].as<bool>();
@@ -1145,6 +1149,8 @@ const char* dashboardPageName(uint8_t pageId) {
             return "clock";
         case DASHBOARD_PAGE_PHOTOS:
             return "photos";
+        case DASHBOARD_PAGE_SPOTIFY:
+            return "spotify";
         case DASHBOARD_PAGE_MARKETS:
             return "markets";
         case DASHBOARD_PAGE_HOME:

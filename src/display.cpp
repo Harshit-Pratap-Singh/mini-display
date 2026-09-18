@@ -3,6 +3,7 @@
 #include "auth.h"
 #include "config.h"
 #include "feeds.h"
+#include "spotify.h"
 #include "logger.h"
 #include <ESP8266WiFi.h>
 #include <LittleFS.h>
@@ -1533,6 +1534,8 @@ bool dashboardPageHasRenderableContent(uint8_t pageId) {
             return true;
         case DASHBOARD_PAGE_PHOTOS:
             return hasPhotoContent();
+        case DASHBOARD_PAGE_SPOTIFY:
+            return spotifyPageAvailable();
         case DASHBOARD_PAGE_MARKETS:
             return hasMarketContent() || anyMarketsWaitingForSync();
         case DASHBOARD_PAGE_HOME:
@@ -1778,6 +1781,12 @@ uint32_t dashboardStaticHash(uint8_t pageId) {
         case DASHBOARD_PAGE_PHOTOS:
             hashCString(hash, currentPhotoPath);
             break;
+        case DASHBOARD_PAGE_SPOTIFY:
+            hashCString(hash, spotifyRuntime.trackName);
+            hashCString(hash, spotifyRuntime.artistName);
+            hashValue(hash, spotifyRuntime.playing);
+            hashValue(hash, spotifyRuntime.artReady);
+            break;
         case DASHBOARD_PAGE_MARKETS:
             hashMarketData(hash);
             break;
@@ -1826,6 +1835,17 @@ uint32_t dashboardDynamicHash(uint8_t pageId) {
             hashCString(hash, metaLine.c_str());
             hashValue(hash, isPm);
             hashValue(hash, clockColonVisible());  // drives the 1 Hz colon blink
+            break;
+        }
+        case DASHBOARD_PAGE_SPOTIFY: {
+            // Hash the bar's pixel position, not the raw progress: at 2 Hz the millisecond
+            // value always differs, which would repaint constantly for no visible change.
+            int filled = spotifyRuntime.durationMs > 0
+                             ? static_cast<int>((static_cast<uint64_t>(spotifyProgressMs()) * 192) /
+                                                spotifyRuntime.durationMs)
+                             : 0;
+            hashValue(hash, filled);
+            hashValue(hash, spotifyRuntime.playing);
             break;
         }
         case DASHBOARD_PAGE_FOCUS: {
@@ -1879,7 +1899,8 @@ uint32_t temporaryMessageHash() {
 }
 
 bool pageUsesDynamicRefresh(uint8_t pageId) {
-    return pageId == DASHBOARD_PAGE_CLOCK ||
+    return pageId == DASHBOARD_PAGE_SPOTIFY ||
+           pageId == DASHBOARD_PAGE_CLOCK ||
            pageId == DASHBOARD_PAGE_FOCUS ||
            pageId == DASHBOARD_PAGE_WORLD ||
            pageId == DASHBOARD_PAGE_EVENT;
@@ -2009,6 +2030,23 @@ void updateClockDynamicArea() {
             updateCardsDynamicArea();
             break;
     }
+}
+
+void updateSpotifyDynamicArea() {
+    const ThemePalette &theme = activeTheme();
+    const int barX = 24;
+    const int barWidth = 192;
+    tft.fillRoundRect(barX, 150, barWidth, 6, 3, theme.surfaceAlt);
+    if (spotifyRuntime.durationMs > 0) {
+        int filled = static_cast<int>((static_cast<uint64_t>(spotifyProgressMs()) * barWidth) /
+                                      spotifyRuntime.durationMs);
+        filled = constrain(filled, 0, barWidth);
+        if (filled > 0) {
+            tft.fillRoundRect(barX, 150, filled, 6, 3, theme.positive);
+        }
+    }
+    drawPaddedText(spotifyRuntime.playing ? "PLAYING" : "PAUSED", 120, 176, TC_DATUM, FONT_INFO,
+                   80, spotifyRuntime.playing ? theme.positive : theme.muted, theme.surface);
 }
 
 void updateFocusDynamicArea() {
@@ -2497,6 +2535,36 @@ void renderPhotosPage() {
     }
 }
 
+// Placeholder until stage 4: proves the page joins rotation and shows live state.
+void renderSpotifyPage() {
+    const ThemePalette &theme = activeTheme();
+    drawScreenChrome("Now Playing");
+    drawRoundedPanel(8, 36, 224, 184, theme.surface, theme.surfaceAlt);
+    const int titleFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
+    drawAdaptiveText(spotifyRuntime.trackName[0] != '\0' ? spotifyRuntime.trackName : "Nothing playing",
+                     120, 70, 200, TC_DATUM, titleFonts,
+                     sizeof(titleFonts) / sizeof(titleFonts[0]), theme.text, theme.surface);
+    const int artistFonts[] = {FONT_LABEL, FONT_INFO};
+    drawAdaptiveText(spotifyRuntime.artistName, 120, 104, 200, TC_DATUM, artistFonts,
+                     sizeof(artistFonts) / sizeof(artistFonts[0]), theme.muted, theme.surface);
+
+    // Progress bar, interpolated between polls.
+    int barX = 24;
+    int barWidth = 192;
+    tft.fillRoundRect(barX, 150, barWidth, 6, 3, theme.surfaceAlt);
+    if (spotifyRuntime.durationMs > 0) {
+        uint32_t progress = spotifyProgressMs();
+        int filled = static_cast<int>((static_cast<uint64_t>(progress) * barWidth) /
+                                      spotifyRuntime.durationMs);
+        filled = constrain(filled, 0, barWidth);
+        if (filled > 0) {
+            tft.fillRoundRect(barX, 150, filled, 6, 3, theme.positive);
+        }
+    }
+    drawPaddedText(spotifyRuntime.playing ? "PLAYING" : "PAUSED", 120, 176, TC_DATUM, FONT_INFO,
+                   0, spotifyRuntime.playing ? theme.positive : theme.muted, theme.surface);
+}
+
 void renderMarketsPage() {
     const ThemePalette &theme = activeTheme();
     if (!hasMarketContent()) {
@@ -2894,6 +2962,9 @@ void renderDashboardPage() {
         case DASHBOARD_PAGE_PHOTOS:
             renderPhotosPage();
             break;
+        case DASHBOARD_PAGE_SPOTIFY:
+            renderSpotifyPage();
+            break;
         case DASHBOARD_PAGE_MARKETS:
             renderMarketsPage();
             break;
@@ -2925,6 +2996,9 @@ void updateDashboardDynamicArea(uint8_t pageId) {
     switch (pageId) {
         case DASHBOARD_PAGE_CLOCK:
             updateClockDynamicArea();
+            break;
+        case DASHBOARD_PAGE_SPOTIFY:
+            updateSpotifyDynamicArea();
             break;
         case DASHBOARD_PAGE_FOCUS:
             updateFocusDynamicArea();

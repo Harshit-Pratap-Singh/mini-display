@@ -12,6 +12,7 @@
 enum DashboardPageId : uint8_t {
     DASHBOARD_PAGE_CLOCK = 0,
     DASHBOARD_PAGE_PHOTOS,  // slideshow of the uploaded JPEGs in /image/
+    DASHBOARD_PAGE_SPOTIFY, // now playing; available only while a track is on or recent
     // No weather page: every clock face already draws the weather, and we only fetch one
     // forecast day, so a separate page had nothing extra to show. Removed 2026-09-17.
     DASHBOARD_PAGE_MARKETS,

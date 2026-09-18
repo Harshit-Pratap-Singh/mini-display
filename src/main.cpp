@@ -12,6 +12,7 @@
 #include "webserver.h"
 #include "settings.h"
 #include "logger.h"
+#include "spotify.h"
 
 // Define NTP Client
 Settings appSettings;
@@ -683,6 +684,7 @@ void setup() {
         }
         dashboardInit();
         feedsInit();
+        spotifyInit();
         logHeapState("filesystem/auth/dashboard/feeds init");
 
         currentBrightness = appSettings.brightness;
@@ -847,6 +849,7 @@ void loop() {
     }
     if (!wifiFailsafeMode && !recoveryBootMode && !networkActionBusy && timeServicesStarted) {
         feedsLoop();
+        spotifyLoop();
     }
 
     if (!wifiFailsafeMode &&
