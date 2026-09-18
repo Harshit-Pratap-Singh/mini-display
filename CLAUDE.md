@@ -181,33 +181,34 @@ This board has no user button, so modes reuse iodn's existing dashboard page mac
 - esptool docs: https://docs.espressif.com/projects/esptool/
 - TFT_eSPI, TJpg_Decoder (Bodmer) and AnimatedGIF (bitbank2) on GitHub
 
-## Status — resume here (updated 2026-09-17)
-**Done:** milestones 1 and 2 (commit `bffd2b6` and the docs commit after it). Stock firmware backed up and verified (`backup/stock_backup.bin`, git-ignored, sha256 in HARDWARE.md). Repo is a fork of iodn @ `d703c12`; `[env:esp12e]` builds and runs on the board; pins and display settings verified. **HARDWARE.md is the source of truth** for hardware facts, heap numbers and the space-budget cut list.
+## Status — resume here (updated 2026-09-19, handover)
+**Done:** milestones 1–6. Everything is committed; the tree is clean at `aa8b578`. **HARDWARE.md is the source of truth** for measured facts — pins, both heaps, TLS costs, the serial-reset trap, the font constraints. Read its last three sections before touching Spotify or a face.
 
-**Device state right now (2026-09-17):** running the unmodified iodn esp12e build, joined to home WiFi (STA, DHCP **192.168.1.14**). Dashboard at http://192.168.1.14, login `admin` + the 10-digit password generated at first boot (not stored anywhere on the PC — every JSON route and `/update` return 401 without it). If credentials are lost it falls back to the failsafe AP `SmartClock-Setup` (8-digit password on screen, regenerates every boot) at http://192.168.4.1.
+**Device state right now:** on home WiFi at **192.168.1.14** (`smartclock-e1cf2e.local`), running `aa8b578` — all four clock faces, photo slideshow, and **four Spotify faces** (`spotifyFace` 0 Art · 1 Text · 2 Radial · 3 Turntable, picker under Display). Spotify credentials and WiFi are on the device in LittleFS; copies in `secrets/` (git-ignored). Dashboard login `admin` + the 10-digit password, which is in **`secrets/device_password`** (mode 600, git-ignored) so `tools/ota_update.sh` can use it.
 
-**Open decisions — resolve at the start of milestone 3:**
-- ~~No physical button on this board~~ **Resolved 2026-09-17:** pages-as-modes, see "Mode logic" (`POST /page` + Show now; button code deleted in commit A).
-- **Heap is ~17 KB free after web server init in AP mode and 18.9 KB in STA (18.4 KB steady)**, not the 40–50 KB assumed. iodn already runs its low-memory fallbacks here (mDNS/ArduinoOTA deferred at the 28,000 B gate, clock sprite skipped at 30,000 B). Before adding Spotify/GIF, follow the cut list in HARDWARE.md → "Space budget". Stripping unused upstream features (markets, Home Assistant, quote, focus, world clocks, countdown, WiFiManager) is approved.
+### FIRST THING NEXT SESSION: rebuild Spotify face 4 (Turntable) properly
+The user looked at it on the panel and asked for it to be **rebuilt properly** — no specifics were given before the session ended. **Ask for a photo of the current face 4 and what is wrong with it before writing code.** Spec and the hardware-forced adaptations are in `design/spotify-face-4-turntable.md`; the mockup's key numbers are there (centre 120,120; label r=72; rim r=74; grooves r=78–96 then a clear band; spin mark at r=103; progress ring r=113–116; tonearm pivot 204,30 sweeping 8°→26.5°). The current implementation is `renderSpotifyFaceTurntable()` + `drawFace4Dynamic()` + `tickTurntableSpin()` in `src/display.cpp`. Likely suspects, unverified: the row-by-row corner mask that makes the art circular (black notches or spill past the gold rim), the tonearm geometry (lifted from an SVG simulator, never measured on the panel), whether one spin mark reads as rotation, and the arm's erase-and-restore leaving streaks. Also **not yet judged by eye:** face 2's equaliser in motion and face 3's bottom row (`82% / PLAYING / SHUF+R` in 148 px).
+
+### Then: milestone 7 (polish) — untouched
+Night dimming, **scrolling text for long titles** (faces 0 and 1 clip with `..`; 2 and 3 wrap), reconnect/watchdog, README with photos, attribution to iodn + Bodmer + bitbank2 + bblanchon + witnessmenow, and a "restore stock firmware" section (`esptool --port /dev/cu.usbserial-10 -b 115200 write-flash 0 backup/stock_backup.bin`).
+
+### Facts that will bite if forgotten
+- **Flash over the air, not USB.** `pio run -e esp12e && tools/ota_update.sh`. A USB upload or a serial-monitor open **resets the board**; two resets inside 30 s trip the boot counter into **recovery mode, which disables `spotifyLoop()`** — a working Spotify page then looks broken. **Five quick cycles factory-reset and wipe WiFi + Spotify credentials.** Only fall back to USB (`/dev/cu.usbserial-10`, 115200) if OTA is unreachable. Check the boot banner for `RECOVERY MODE` before debugging anything Spotify.
+- **DRAM is ~2 KB free during a Spotify poll** (measured; IRAM ~13 KB is fine). TLS takes ~10 KB of ~16 KB. Every Spotify failure so far traced to *our* allocation habits, not Spotify: `String` concatenation before a parse, a JSON filter rebuilt per poll, a header timeout misreported as a parse error. **Fixed buffers, print pieces, never `String +` on the poll path.** If `Parse: NoMemory` returns, the answer is a fixed-size arena allocator for the parse — deliberately not built yet. Faces 0 and 3 decode a JPEG; faces 1 and 2 never touch the decoder and are the fallbacks if memory misbehaves.
+- **`ESP.getFreeHeap()` is DRAM only.** The BearSSL receive buffer comes from the IRAM second heap. Face 0's `DRAM/IRAM` cell and the poll log show both, sampled *during* the poll — idle heap says nothing.
+- **Fonts 6 and 7 are digits-only.** `FONT_BODY` (26 px) is the largest that can draw a title; wrap (`drawWrappedText`) rather than shrink.
+- **`drawString` paints an opaque box**; overlaps erase neighbours. **Anything drawn but not hashed never repaints.** Repainting a whole ring at 2 Hz flickers — redraw only the changed wedge.
+- **A circle inscribed in a 240×240 square has nothing in the corners**: at y=30 only x 72..168 is inside r=102. Compute the usable width per row before placing anything on a radial face.
+- Two `.venv`s exist; `.venv-1` has Pillow. `node` is present for `node --check` on `src/webui.h` scripts — extract each `<script>` block separately (two pages each declare `uiThemeStorageKey`).
 
 **Commands (macOS, this board):**
 ```
-pio run -e esp12e                                                    # build
-pio run -e esp12e -t upload --upload-port /dev/cu.usbserial-10       # flash — 115200 only, 460800+ corrupts on this CH340
-pio device monitor -p /dev/cu.usbserial-10 -b 115200                 # opening the port resets the board (auto-reset)
-esptool --port /dev/cu.usbserial-10 -b 115200 write-flash 0 backup/stock_backup.bin   # restore stock firmware
+pio run -e esp12e                              # build (tools/prebuild.py regenerates src/webui_gz.h)
+tools/ota_update.sh                            # flash over WiFi — the default; needs secrets/device_password
+pio run -e esp12e -t upload --upload-port /dev/cu.usbserial-10   # USB fallback — resets the board, 115200 only
+c++ -std=c++17 -o /tmp/t tools/test_spotify_url.cpp && /tmp/t   # PC selftest for the art URL parser
+esptool --port /dev/cu.usbserial-10 -b 115200 write-flash 0 backup/stock_backup.bin   # restore stock
 ```
-Installed: Homebrew esptool 5.4.0, platformio 6.2.0. Not yet installed (needed from milestone 5): `brew install gifsicle`, Pillow.
-
-**Milestone 3 progress (2026-09-17):** WiFi set up ✅ (STA 192.168.1.14). STA heap recorded in HARDWARE.md ✅. Button-less design agreed and **commit A shipped ✅** (button → `POST /page` + Show now, Clock-only/rotation-off defaults) — flashed over USB and verified on hardware, see HARDWARE.md “Milestone 3 — commit A”. Also verified: WiFi, **NTP** (device clock matches to the second), **settings persistence** across reboot and across a flash, image upload, LittleFS 2 MB layout. Timezone set to IST (19800); it was UTC out of the box.
-
-**Still to do in milestone 3:**
-- ✅ **Web OTA (`/update`) VERIFIED 2026-09-19** — 738,896 B uploaded, accepted, rebooted, back serving. Use **`tools/ota_update.sh [host]`**: the route authenticates with a session *cookie*, not HTTP basic, so `curl -u` gets a 401; the script logs in to `/auth/login` first and reuses the cookie. It reads the password from `secrets/device_password` (git-ignored, mode 600) and pipes it via `--data-binary @-` so it never appears in shell history or `ps`. **Prefer this over USB for every flash.** A USB upload resets the board, and two resets inside the 30 s stability window trip it into recovery mode, which disables `spotifyLoop()` and makes working code look broken — that cost an hour on 2026-09-18. `espota` also works: `pio run -e esp12e -t upload --upload-port smartclock-e1cf2e.local --upload-protocol espota --upload-flags --auth=<admin password>`.
-- ~~**Commit B:** the approved strip~~ **Done differently and better:** 198 KB of flash reclaimed with **no features removed** — gzip the embedded web pages (~130 KB), drop SD/SdFat (~22 KB), drop WiFiManager (~55 KB). Sketch is now 66.6% full with 348 KB free. See HARDWARE.md “Space budget” for the measured table and the per-feature list still available if ever needed.
-- ✅ **Done:** heap gate lowered to 12,000 — **mDNS and ArduinoOTA now start for the first time** (`smartclock-e1cf2e.local` resolves; `espota` upload verified end to end). `clearImageDirectory()` deleted, so uploaded images persist across reboots as milestone 5 needs.
-- **Heap, not flash, is now the constraint for Spotify** — but the trim helped there too: free heap rose from 18,568 to **21,408 B** steady (STA), against ~16 KB for one BearSSL receive buffer. Milestone 6 is now plausible without deleting any display page; confirm MFLN behaviour with `api.spotify.com` when we get there.
-- ✅ **Commit C done:** the clock page is now four selectable faces (Cards / Bold / Matrix / Radial) with configurable hour/minute/second colours and a 1 Hz blinking colon, plus humidity and pressure added to the weather feed. Build **704,827 B (67.5%)**, 332 KB free, no heap cost. Details, font constraints and the repaint rules are in HARDWARE.md → "Milestone 3 — commit C: clock faces"; read it before editing a face.
-- **Next:** milestone 4 (weather page against our layout, offline behaviour), then 5 (photo frame) and 6 (Spotify).
 
 ## Kickoff prompt for the next session
-> Read CLAUDE.md and HARDWARE.md. Resume at milestone 3 per the Status section: the board is on /dev/cu.usbserial-10 and on home WiFi at 192.168.1.14 running the unmodified iodn esp12e build. Continue from the milestone 3 progress list. Stop and show me before every flash.
+> Read CLAUDE.md (Status section first) and the last three sections of HARDWARE.md. The board is at 192.168.1.14 running `aa8b578` with four Spotify faces. First task: rebuild Spotify face 4 (Turntable) properly — ask me for a photo and what's wrong before changing code. Flash with `tools/ota_update.sh`, never USB unless OTA is down. Stop and show me before every flash. I'm new to embedded — explain hardware constraints from first principles.
