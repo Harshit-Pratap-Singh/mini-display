@@ -5,6 +5,7 @@
 #include <LittleFS.h>
 #include <WiFiClientSecure.h>
 #include <base64.h>
+#include <umm_malloc/umm_heap_select.h>
 
 #include "logger.h"
 #include "spotify_url.h"
@@ -78,6 +79,11 @@ BearSSL::Session apiSession;
 BearSSL::Session authSession;
 BearSSL::Session artSession;
 
+void freeHeaps(uint32_t &dram, uint32_t &iram) {
+    { HeapSelectDram scope; dram = ESP.getFreeHeap(); }
+    { HeapSelectIram scope; iram = ESP.getFreeHeap(); }
+}
+
 void setError(const char *message) {
     strncpy(spotifyRuntime.lastError, message, sizeof(spotifyRuntime.lastError) - 1);
     spotifyRuntime.lastError[sizeof(spotifyRuntime.lastError) - 1] = '\0';
@@ -142,17 +148,35 @@ bool refreshAccessToken() {
     BearSSL::WiFiClientSecure client;
     configureTlsClient(client, authSession);
     if (!client.connect(kAuthHost, 443)) {
-        setError("Auth connect failed");
+        uint32_t dram = 0;
+        uint32_t iram = 0;
+        freeHeaps(dram, iram);
+        char detail[sizeof(spotifyRuntime.lastError)];
+        snprintf(detail, sizeof(detail), "Auth d%u i%u e%d", dram, iram,
+                 client.getLastSSLError());
+        setError(detail);
+        logPrintf("Spotify auth connect failed: ssl %d, DRAM %u, IRAM %u",
+                  client.getLastSSLError(), dram, iram);
         return false;
     }
 
-    String body = "grant_type=refresh_token&refresh_token=" + String(spotifyConfig.refreshToken);
-    String basic = base64::encode(String(spotifyConfig.clientId) + ":" + spotifyConfig.clientSecret);
+    char body[SPOTIFY_REFRESH_TOKEN_LENGTH + 48];
+    int bodyLength = snprintf(body, sizeof(body),
+                              "grant_type=refresh_token&refresh_token=%s",
+                              spotifyConfig.refreshToken);
+    char credentials[SPOTIFY_CLIENT_ID_LENGTH + SPOTIFY_CLIENT_SECRET_LENGTH + 2];
+    snprintf(credentials, sizeof(credentials), "%s:%s",
+             spotifyConfig.clientId, spotifyConfig.clientSecret);
+    String basic = base64::encode(String(credentials));  // the one String we cannot avoid
 
-    client.print(String(F("POST /api/token HTTP/1.1\r\nHost: ")) + kAuthHost +
-                 F("\r\nAuthorization: Basic ") + basic +
-                 F("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: ") +
-                 String(body.length()) + F("\r\nConnection: close\r\n\r\n") + body);
+    client.print(F("POST /api/token HTTP/1.1\r\nHost: "));
+    client.print(kAuthHost);
+    client.print(F("\r\nAuthorization: Basic "));
+    client.print(basic);
+    client.print(F("\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: "));
+    client.print(bodyLength);
+    client.print(F("\r\nConnection: close\r\n\r\n"));
+    client.print(body);
 
     int status = readHttpResponseHead(client, nullptr);
     if (status != 200) {
@@ -230,13 +254,23 @@ bool fetchNowPlaying() {
     BearSSL::WiFiClientSecure client;
     configureTlsClient(client, apiSession);
     if (!client.connect(kApiHost, 443)) {
-        setError("API connect failed");
+        uint32_t dram = 0;
+        uint32_t iram = 0;
+        freeHeaps(dram, iram);
+        char detail[sizeof(spotifyRuntime.lastError)];
+        snprintf(detail, sizeof(detail), "Connect d%u i%u e%d", dram, iram,
+                 client.getLastSSLError());
+        setError(detail);
+        logPrintf("Spotify API connect failed: ssl %d, DRAM %u, IRAM %u",
+                  client.getLastSSLError(), dram, iram);
         return false;
     }
 
-    client.print(String(F("GET /v1/me/player HTTP/1.1\r\nHost: ")) + kApiHost +
-                 F("\r\nAuthorization: Bearer ") + accessToken +
-                 F("\r\nConnection: close\r\n\r\n"));
+    client.print(F("GET /v1/me/player HTTP/1.1\r\nHost: "));
+    client.print(kApiHost);
+    client.print(F("\r\nAuthorization: Bearer "));
+    client.print(accessToken);
+    client.print(F("\r\nConnection: close\r\n\r\n"));
 
     int retryAfter = 0;
     long bodyLength = -1;
@@ -277,7 +311,6 @@ bool fetchNowPlaying() {
     filter["progress_ms"] = true;
     filter["shuffle_state"] = true;
     filter["repeat_state"] = true;
-    filter["currently_playing_type"] = true;
     filter["device"]["name"] = true;
     filter["device"]["volume_percent"] = true;
     filter["item"]["name"] = true;
@@ -335,6 +368,13 @@ bool fetchNowPlaying() {
     }
     spotifyRuntime.lastPollLatencyMs = static_cast<uint16_t>(millis() - startedMs);
     setError("");
+    {
+        uint32_t dram = 0;
+        uint32_t iram = 0;
+        freeHeaps(dram, iram);
+        logPrintf("Spotify poll OK %ums, DRAM %u, IRAM %u",
+                  spotifyRuntime.lastPollLatencyMs, dram, iram);
+    }
     return true;
 }
 
@@ -352,12 +392,20 @@ bool downloadArt() {
     BearSSL::WiFiClientSecure client;
     configureTlsClient(client, artSession);
     if (!client.connect(host, 443)) {
+        uint32_t dram = 0;
+        uint32_t iram = 0;
+        freeHeaps(dram, iram);
         setError("Art connect failed");
+        logPrintf("Spotify art connect failed: ssl %d, DRAM %u, IRAM %u",
+                  client.getLastSSLError(), dram, iram);
         return false;
     }
 
-    client.print(String(F("GET ")) + path + F(" HTTP/1.1\r\nHost: ") + host +
-                 F("\r\nConnection: close\r\n\r\n"));
+    client.print(F("GET "));
+    client.print(path);
+    client.print(F(" HTTP/1.1\r\nHost: "));
+    client.print(host);
+    client.print(F("\r\nConnection: close\r\n\r\n"));
 
     long contentLength = -1;
     int status = readHttpResponseHead(client, nullptr, &contentLength);
