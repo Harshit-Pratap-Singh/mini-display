@@ -39,6 +39,7 @@ enum DashboardSpotifyFaceId : uint8_t {
     DASHBOARD_SPOTIFY_FACE_ART = 0,  // album art beside the track, telemetry strip below
     DASHBOARD_SPOTIFY_FACE_TEXT,     // no art, no JPEG decode: type and vector primitives
     DASHBOARD_SPOTIFY_FACE_RADIAL,   // 360 degree progress ring with a needle head
+    DASHBOARD_SPOTIFY_FACE_TURNTABLE,// spinning record, circular art, tracking tonearm
     DASHBOARD_SPOTIFY_FACE_COUNT
 };
 

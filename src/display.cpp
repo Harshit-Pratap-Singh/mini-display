@@ -2182,6 +2182,9 @@ void drawSpotifyProgress() {
 void drawFace2Dynamic();
 void drawFace3Dynamic();
 void renderSpotifyFaceRadial();
+void drawFace4Dynamic();
+void renderSpotifyFaceTurntable();
+void tickTurntableSpin();
 void renderSpotifyFaceText();
 void renderSpotifyFaceArt();
 
@@ -2192,6 +2195,10 @@ void updateSpotifyDynamicArea() {
     }
     if (dashboardConfig.spotifyFace == DASHBOARD_SPOTIFY_FACE_RADIAL) {
         drawFace3Dynamic();
+        return;
+    }
+    if (dashboardConfig.spotifyFace == DASHBOARD_SPOTIFY_FACE_TURNTABLE) {
+        drawFace4Dynamic();
         return;
     }
     drawSpotifyProgress();
@@ -2205,6 +2212,9 @@ void renderSpotifyPage() {
             break;
         case DASHBOARD_SPOTIFY_FACE_RADIAL:
             renderSpotifyFaceRadial();
+            break;
+        case DASHBOARD_SPOTIFY_FACE_TURNTABLE:
+            renderSpotifyFaceTurntable();
             break;
         default:
             renderSpotifyFaceArt();
@@ -2970,6 +2980,253 @@ void renderSpotifyFaceRadial() {
     }
 }
 
+
+// --- Spotify player face 4: minimalist turntable ------------------------------
+// design/spotify-face-4-turntable.md. A record with the album art as its label, a
+// tonearm that tracks inward as the song plays, and the progress as the disc's rim.
+constexpr int kTtCenter = 120;
+constexpr int kTtArtRadius = 72;   // the label: 144 px across, as the mockup specifies
+constexpr int kTtRimRadius = 74;
+constexpr int kTtGrooveFirst = 78;
+constexpr int kTtGrooveLast = 96;
+constexpr int kTtSpinRadius = 103; // inside the clear band, so erasing is a black dot
+constexpr int kTtEdgeRadius = 112;
+constexpr int kTtRingOuter = 116;
+constexpr int kTtRingInner = 113;
+constexpr int kTtArmPivotX = 204;
+constexpr int kTtArmPivotY = 30;
+
+constexpr uint16_t kTtBlack = rgb565(0x05, 0x05, 0x05);
+constexpr uint16_t kTtGold = rgb565(0xee, 0x98, 0x00);
+constexpr uint16_t kTtGoldPale = rgb565(0xff, 0xdd, 0xb8);
+constexpr uint16_t kTtGrooveA = rgb565(0x25, 0x2a, 0x33);
+constexpr uint16_t kTtGrooveB = rgb565(0x14, 0x17, 0x1d);
+constexpr uint16_t kTtLabelFallback = rgb565(0x18, 0x23, 0x32);
+
+int lastArmAngleTenths = -1;
+int spinAngle = 0;
+int lastTtSweep = -1;
+
+void drawTurntableGrooves() {
+    for (int r = kTtGrooveFirst; r <= kTtGrooveLast; r += 3) {
+        tft.drawCircle(kTtCenter, kTtCenter, r, ((r / 3) & 1) ? kTtGrooveA : kTtGrooveB);
+    }
+    tft.drawCircle(kTtCenter, kTtCenter, kTtEdgeRadius, kTtGrooveA);
+}
+
+// The album art is square and TJpg has no clip region, so the corners are painted back
+// to black row by row afterwards. That is what turns a photo into a record label.
+void drawTurntableLabel() {
+    if (!spotifyConfig.showArt || !spotifyRuntime.artReady ||
+        !LittleFS.exists(SPOTIFY_ART_PATH)) {
+        tft.fillCircle(kTtCenter, kTtCenter, kTtArtRadius, kTtLabelFallback);
+        return;
+    }
+
+    uint16_t width = 0;
+    uint16_t height = 0;
+    if (TJpgDec.getFsJpgSize(&width, &height, SPOTIFY_ART_PATH, LittleFS) != JDR_OK ||
+        width == 0) {
+        tft.fillCircle(kTtCenter, kTtCenter, kTtArtRadius, kTtLabelFallback);
+        return;
+    }
+
+    // Smallest scale that still covers the label, so the mask crops rather than leaving
+    // a gap. A 300 px source gives 150 px at scale 2 against a 144 px label.
+    uint8_t scale = 1;
+    while (scale < 8 && (width / (scale * 2)) >= kTtArtRadius * 2) {
+        scale *= 2;
+    }
+    int drawn = width / scale;
+    int origin = kTtCenter - drawn / 2;
+
+    TJpgDec.setJpgScale(scale);
+    File artFile = LittleFS.open(SPOTIFY_ART_PATH, "r");
+    if (artFile) {
+        TJpgDec.drawFsJpg(origin, origin, artFile);
+        artFile.close();
+    }
+    TJpgDec.setJpgScale(1);  // the photo slideshow draws full screen and expects 1
+
+    for (int y = origin; y < origin + drawn; ++y) {
+        int dy = y - kTtCenter;
+        int half = 0;
+        if (abs(dy) < kTtArtRadius) {
+            half = static_cast<int>(sqrtf(static_cast<float>(kTtArtRadius * kTtArtRadius -
+                                                             dy * dy)));
+        }
+        int leftEnd = kTtCenter - half;
+        int rightStart = kTtCenter + half;
+        if (leftEnd > origin) {
+            tft.drawFastHLine(origin, y, leftEnd - origin, kTtBlack);
+        }
+        if (origin + drawn > rightStart) {
+            tft.drawFastHLine(rightStart, y, origin + drawn - rightStart, kTtBlack);
+        }
+    }
+}
+
+void drawTurntableSpindle() {
+    tft.drawCircle(kTtCenter, kTtCenter, kTtRimRadius, kTtGold);
+    tft.fillCircle(kTtCenter, kTtCenter, 8, kTtGold);
+    tft.fillCircle(kTtCenter, kTtCenter, 5, kTtGoldPale);
+    tft.fillCircle(kTtCenter, kTtCenter, 2, kTtBlack);
+}
+
+// Tip travels from the lead-in towards the label as the track plays. It deliberately
+// stops at the label edge rather than crossing the art, so moving it only has to
+// repaint the groove band - never re-decode the JPEG.
+void turntableArmTip(float angleDegrees, int &x, int &y) {
+    float radians = angleDegrees * DEG_TO_RAD;
+    float tipX = kTtArmPivotX - cosf(radians) * 68.0f;
+    float tipY = kTtArmPivotY + sinf(radians) * 92.0f;
+    float dx = tipX - kTtCenter;
+    float dy = tipY - kTtCenter;
+    float distance = sqrtf(dx * dx + dy * dy);
+    float limit = static_cast<float>(kTtRimRadius + 4);
+    if (distance < limit && distance > 0.1f) {
+        tipX = kTtCenter + dx / distance * limit;
+        tipY = kTtCenter + dy / distance * limit;
+    }
+    x = static_cast<int>(lroundf(tipX));
+    y = static_cast<int>(lroundf(tipY));
+}
+
+void drawTurntableArm(float angleDegrees, uint16_t color) {
+    int tipX = 0;
+    int tipY = 0;
+    turntableArmTip(angleDegrees, tipX, tipY);
+    // Three parallel strokes rather than drawWideLine: cheaper and thick enough to read.
+    for (int offset = -1; offset <= 1; ++offset) {
+        tft.drawLine(kTtArmPivotX + offset, kTtArmPivotY, tipX + offset, tipY, color);
+    }
+    tft.fillCircle(tipX, tipY, 3, color == kTtBlack ? kTtBlack : rgb565(0xff, 0x3b, 0x30));
+}
+
+void drawTurntablePivot() {
+    tft.fillCircle(kTtArmPivotX, kTtArmPivotY, 11, rgb565(0x11, 0x13, 0x18));
+    tft.drawCircle(kTtArmPivotX, kTtArmPivotY, 11, kSpMuted);
+    tft.fillCircle(kTtArmPivotX, kTtArmPivotY, 6, rgb565(0x27, 0x2a, 0x2f));
+    tft.drawCircle(kTtArmPivotX, kTtArmPivotY, 6, kSpAmber);
+    tft.fillCircle(kTtArmPivotX, kTtArmPivotY, 3, kSpCyan);
+}
+
+float turntableArmAngle() {
+    float fraction = 0.0f;
+    if (spotifyRuntime.durationMs > 0) {
+        fraction = static_cast<float>(spotifyProgressMs()) /
+                   static_cast<float>(spotifyRuntime.durationMs);
+        fraction = constrain(fraction, 0.0f, 1.0f);
+    }
+    return 8.0f + fraction * (26.5f - 8.0f);  // lead-in to runout, from the mockup
+}
+
+void drawTurntableRing(bool full) {
+    uint32_t progress = spotifyProgressMs();
+    int sweep = 0;
+    if (spotifyRuntime.durationMs > 0) {
+        sweep = static_cast<int>((static_cast<uint64_t>(progress) * 360) /
+                                 spotifyRuntime.durationMs);
+        sweep = constrain(sweep, 0, 360);
+    }
+    if (full || sweep < lastTtSweep || lastTtSweep < 0) {
+        tft.drawArc(kTtCenter, kTtCenter, kTtRingOuter, kTtRingInner, 0, 360,
+                    rgb565(0x1d, 0x20, 0x24), kTtBlack, true);
+        if (sweep >= 2) {
+            tft.drawArc(kTtCenter, kTtCenter, kTtRingOuter, kTtRingInner,
+                        kRingTop, (kRingTop + sweep) % 360, kSpMint, kTtBlack, true);
+        }
+        lastTtSweep = sweep;
+        return;
+    }
+    if (sweep == lastTtSweep) {
+        return;  // untouched, or it flickers - the lesson from face 3
+    }
+    tft.drawArc(kTtCenter, kTtCenter, kTtRingOuter, kTtRingInner,
+                (kRingTop + lastTtSweep) % 360, (kRingTop + sweep) % 360,
+                kSpMint, kTtBlack, true);
+    lastTtSweep = sweep;
+}
+
+void drawTurntableGlance() {
+    // Two slabs over the record, as the mockup layers them: identity on top, time below.
+    tft.fillRoundRect(16, 16, 208, 50, 3, kTtBlack);
+    const int titleFonts[] = {FONT_BODY, FONT_LABEL, FONT_INFO};
+    drawWrappedText(spotifyRuntime.trackName[0] != '\0' ? spotifyRuntime.trackName
+                                                        : "Nothing playing",
+                    kTtCenter, 50, 196, 1, titleFonts,
+                    sizeof(titleFonts) / sizeof(titleFonts[0]), kSpText, kTtBlack);
+    drawAdaptiveText(spotifyRuntime.artistName, kTtCenter, 52, 196, TC_DATUM,
+                     titleFonts + 2, 1, kSpMint, kTtBlack);
+}
+
+void drawFace4Dynamic() {
+    drawTurntableRing(false);
+
+    // The arm barely moves - 18.5 degrees across a whole track - so it is only redrawn
+    // when it actually shifts, and the groove band is repainted underneath it.
+    float angle = turntableArmAngle();
+    int tenths = static_cast<int>(angle * 10.0f);
+    if (lastArmAngleTenths < 0 || abs(tenths - lastArmAngleTenths) >= 10) {
+        if (lastArmAngleTenths >= 0) {
+            drawTurntableArm(static_cast<float>(lastArmAngleTenths) / 10.0f, kTtBlack);
+            drawTurntableGrooves();
+        }
+        drawTurntableArm(angle, kSpText);
+        drawTurntablePivot();
+        lastArmAngleTenths = tenths;
+    }
+
+    tft.fillRoundRect(24, 184, 192, 38, 3, kTtBlack);
+    uint32_t progress = spotifyProgressMs();
+    drawPaddedText(formatTrackTime(progress), 32, 188, TL_DATUM, FONT_LABEL, 56,
+                   kSpText, kTtBlack);
+    drawPaddedText(spotifyRuntime.durationMs > 0 ? formatTrackTime(spotifyRuntime.durationMs)
+                                                 : "--:--",
+                   208, 190, TR_DATUM, FONT_INFO, 52, kSpMuted, kTtBlack);
+    drawPaddedText(spotifyRuntime.playing ? "33 RPM" : "PAUSED", kTtCenter, 190, TC_DATUM,
+                   FONT_INFO, 60, spotifyRuntime.playing ? kSpAmber : kSpMuted, kTtBlack);
+
+    tft.fillRect(32, 212, 176, 2, rgb565(0x19, 0x1c, 0x20));
+    if (spotifyRuntime.durationMs > 0) {
+        int filled = static_cast<int>((static_cast<uint64_t>(progress) * 176) /
+                                      spotifyRuntime.durationMs);
+        filled = constrain(filled, 0, 176);
+        if (filled > 0) {
+            tft.fillRect(32, 212, filled, 2, kSpMint);
+        }
+    }
+}
+
+void renderSpotifyFaceTurntable() {
+    tft.fillScreen(kTtBlack);
+    lastArmAngleTenths = -1;
+    lastTtSweep = -1;
+
+    drawTurntableGrooves();
+    drawTurntableLabel();
+    drawTurntableSpindle();
+    drawTurntableRing(true);
+    drawTurntableArm(turntableArmAngle(), kSpText);
+    drawTurntablePivot();
+    lastArmAngleTenths = static_cast<int>(turntableArmAngle() * 10.0f);
+    drawTurntableGlance();
+    drawFace4Dynamic();
+}
+
+// The record has to look like it is turning, but a rotated circle is the same circle and
+// there is no framebuffer to spin. A single mark riding a deliberately groove-free band
+// carries the motion instead, and erasing it is one black dot.
+void tickTurntableSpin() {
+    int x = 0;
+    int y = 0;
+    ringPoint(spinAngle, kTtSpinRadius, x, y);
+    tft.fillCircle(x, y, 3, kTtBlack);
+    spinAngle = (spinAngle + 4) % 360;   // ~8 s per revolution at 12 fps, as the mockup
+    ringPoint(spinAngle, kTtSpinRadius, x, y);
+    tft.fillCircle(x, y, 3, kTtGoldPale);
+}
+
 // Sixteen chunks rather than a smooth bar, straight from the mockup. Drawn segment by
 // segment so a repaint only touches the chunks that changed state.
 void drawSegmentedProgress() {
@@ -3580,17 +3837,28 @@ void renderDashboardPageCached() {
 
 // Runs straight from loop(): the equaliser needs ~12 fps and the page tick gives 2.
 void displaySpotifyEqualizerTick() {
-    if (dashboardConfig.spotifyFace != DASHBOARD_SPOTIFY_FACE_TEXT ||
-        displayState.currentPage != DASHBOARD_PAGE_SPOTIFY ||
+    if (displayState.currentPage != DASHBOARD_PAGE_SPOTIFY ||
         displayState.showImage || displayState.apMode) {
+        return;
+    }
+    const bool isText = dashboardConfig.spotifyFace == DASHBOARD_SPOTIFY_FACE_TEXT;
+    const bool isTurntable = dashboardConfig.spotifyFace == DASHBOARD_SPOTIFY_FACE_TURNTABLE;
+    if (!isText && !isTurntable) {
         return;
     }
     if (millis() - lastEqTickMs < kEqTickMs) {
         return;
     }
     lastEqTickMs = millis();
-    tickEqualizerLevels();
-    drawSpotifyEqualizer(false);
+    if (isText) {
+        tickEqualizerLevels();
+        drawSpotifyEqualizer(false);
+        return;
+    }
+    // A stopped record should look stopped, so the mark only travels while playing.
+    if (spotifyRuntime.playing) {
+        tickTurntableSpin();
+    }
 }
 
 

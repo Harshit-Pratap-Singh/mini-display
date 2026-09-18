@@ -1125,6 +1125,7 @@ input[type="submit"]:disabled,
                                 <option value="0">Art - album art, track and telemetry</option>
                                 <option value="1">Text - no art, equaliser and big type</option>
                                 <option value="2">Radial - 360 ring with a needle head</option>
+                                <option value="3">Turntable - spinning record and tonearm</option>
                             </select>
                         </div>
                         <div class="field">
