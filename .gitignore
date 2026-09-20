@@ -11,3 +11,7 @@ backup/
 secrets/
 platformio.local.ini
 .venv/
+
+# Python build artifacts
+__pycache__/
+*.pyc
