@@ -166,6 +166,7 @@ This board has no user button, so modes reuse iodn's existing dashboard page mac
 7. **Polish.** Night dimming, scrolling text, reconnect/watchdog, web OTA, README with photos, attribution to the projects we built on, and a "restore stock firmware" section (`esptool write_flash 0 backup/stock_backup.bin`).
 
 ## Working style
+- **Branch per iteration (user instruction 2026-09-20).** Every new feature or iteration starts on its own branch off `main` (`git switch -c <feature>`); it is merged back into `main` only once the feature is finished **and verified on the hardware**. `main` therefore only ever holds firmware that has been flashed and seen working. Note the local integration branch is `main`; `upstream/master` is iodn's repo, not ours.
 - Small, hardware-verified commits per milestone; include heap/fps numbers in commit messages where relevant.
 - When something doesn't fit in RAM/flash, trim features (fonts, TLS ciphers, page HTML) rather than adding buffers. A helper server (PC/Pi renders images for the ESP) is the last-resort fallback: note it, don't build it unless milestone 6 fails.
 - `HARDWARE.md` is the single source of truth for pins and display settings once verified; keep the hypothesis table here in sync.
@@ -182,12 +183,24 @@ This board has no user button, so modes reuse iodn's existing dashboard page mac
 - TFT_eSPI, TJpg_Decoder (Bodmer) and AnimatedGIF (bitbank2) on GitHub
 
 ## Status — resume here (updated 2026-09-19, handover)
-**Done:** milestones 1–6. Everything is committed; the tree is clean at `aa8b578`. **HARDWARE.md is the source of truth** for measured facts — pins, both heaps, TLS costs, the serial-reset trap, the font constraints. Read its last three sections before touching Spotify or a face.
+**Done:** milestones 1–6. Everything flashed is committed; the tree is clean. **HARDWARE.md is the source of truth** for measured facts — pins, both heaps, TLS costs, the serial-reset trap, the font constraints. Read its last three sections before touching Spotify or a face.
 
 **Device state right now:** on home WiFi at **192.168.1.14** (`smartclock-e1cf2e.local`), running `aa8b578` — all four clock faces, photo slideshow, and **four Spotify faces** (`spotifyFace` 0 Art · 1 Text · 2 Radial · 3 Turntable, picker under Display). Spotify credentials and WiFi are on the device in LittleFS; copies in `secrets/` (git-ignored). Dashboard login `admin` + the 10-digit password, which is in **`secrets/device_password`** (mode 600, git-ignored) so `tools/ota_update.sh` can use it.
 
-### FIRST THING NEXT SESSION: rebuild Spotify face 4 (Turntable) properly
-The user looked at it on the panel and asked for it to be **rebuilt properly** — no specifics were given before the session ended. **Ask for a photo of the current face 4 and what is wrong with it before writing code.** Spec and the hardware-forced adaptations are in `design/spotify-face-4-turntable.md`; the mockup's key numbers are there (centre 120,120; label r=72; rim r=74; grooves r=78–96 then a clear band; spin mark at r=103; progress ring r=113–116; tonearm pivot 204,30 sweeping 8°→26.5°). The current implementation is `renderSpotifyFaceTurntable()` + `drawFace4Dynamic()` + `tickTurntableSpin()` in `src/display.cpp`. Likely suspects, unverified: the row-by-row corner mask that makes the art circular (black notches or spill past the gold rim), the tonearm geometry (lifted from an SVG simulator, never measured on the panel), whether one spin mark reads as rotation, and the arm's erase-and-restore leaving streaks. Also **not yet judged by eye:** face 2's equaliser in motion and face 3's bottom row (`82% / PLAYING / SHUF+R` in 148 px).
+### FIRST THING NEXT SESSION: the user's verdict on Spotify face 4, then the 90 px label
+Face 4 (Turntable) was rebuilt and then given a **turning album-art label**; both are flashed and running, and both are committed. Measured: label store 8,564 B in IRAM (10,336 B left), label frame 13.0 ms with art at 12.5 fps (~16% CPU while playing), full render 711 ms with art (the JPEG decode dominates), poll DRAM 6.0–7.1 KB steady over 20 polls. Details in HARDWARE.md → "the label turns with the record".
+
+**Next iteration, investigated and costed 2026-09-19, not yet built** — a bigger turning label. Work it on a branch (see Working style). Two steps, flash and verify each separately:
+1. **160 MHz** (`board_build.f_cpu = 160000000L` in `[env:esp12e]`). Verified: compiles, RAM identical, flash 24 B smaller, and `core_esp8266_main.cpp:97` turns it into one register bit (`CPU2X`). The display SPI clock is derived from a hard-coded 80 MHz constant so it does not change. Only the `analogWrite` PWM generator and I2C are calibrated to `F_CPU`, and the PWM already carries 160 MHz constants. Expect ~1.5× on the label frame and **~2× on the Spotify poll** (pure CPU, no SPI) — that is the real prize, 1.6 s → ~0.85 s of frozen display.
+2. **90 px label** (`kLabelR` 45, rim 47, rim edge 48, grooves from 52, run-out 54). 12,700 B store leaves 6,204 B of the IRAM second heap, clearing the ~4 KB safety floor. 48% more area at **full 16-bit colour** — no palette, no dithering. At 160 MHz it costs ~13.0 ms per frame, i.e. exactly today's 74 px cost.
+
+**Do not go to 104 px.** At 16 bpp it leaves only 1,932 B of IRAM, under the safety floor; at 8 bpp a fixed palette visibly crosshatches (rendered and compared on a real cover) and a per-image palette needs a 256-way nearest-colour search per pixel, which does not fit the CPU budget. 96 px is the absolute ceiling at 4,484 B left.
+
+**Optional third step, worth ~2 ms:** one `setAddrWindow` over the label's bounding square streamed with `pushPixels`, instead of one `pushImage` per row. Disassembly of our own firmware: each row costs `pushImage` + `setWindow` + `pushPixels` = **418 instructions, 70 busy-wait loops, 56 memory barriers**, about 63 µs. The catch is that the square's corners (1,751 extra pixels at 90 px) eat most of the saving, and 22 tonearm pixels fall inside the square near the run-out and would be erased every frame — redraw them after each frame.
+
+**Caveat on all of the above:** the 63 µs per row is derived from two measurements plus the disassembly, not measured directly. One flash that times `drawTurntableLabelFrame` three ways (normal, with the push a no-op, with a constant row) would pin it down and give the true 160 MHz factor.
+
+**Also not yet judged by eye:** face 2's equaliser in motion and face 3's bottom row.
 
 ### Then: milestone 7 (polish) — untouched
 Night dimming, **scrolling text for long titles** (faces 0 and 1 clip with `..`; 2 and 3 wrap), reconnect/watchdog, README with photos, attribution to iodn + Bodmer + bitbank2 + bblanchon + witnessmenow, and a "restore stock firmware" section (`esptool --port /dev/cu.usbserial-10 -b 115200 write-flash 0 backup/stock_backup.bin`).
@@ -207,8 +220,9 @@ pio run -e esp12e                              # build (tools/prebuild.py regene
 tools/ota_update.sh                            # flash over WiFi — the default; needs secrets/device_password
 pio run -e esp12e -t upload --upload-port /dev/cu.usbserial-10   # USB fallback — resets the board, 115200 only
 c++ -std=c++17 -o /tmp/t tools/test_spotify_url.cpp && /tmp/t   # PC selftest for the art URL parser
+c++ -std=c++17 -o /tmp/tt tools/test_turntable.cpp && /tmp/tt /tmp   # PC check + PPM frames of Spotify face 4
 esptool --port /dev/cu.usbserial-10 -b 115200 write-flash 0 backup/stock_backup.bin   # restore stock
 ```
 
 ## Kickoff prompt for the next session
-> Read CLAUDE.md (Status section first) and the last three sections of HARDWARE.md. The board is at 192.168.1.14 running `aa8b578` with four Spotify faces. First task: rebuild Spotify face 4 (Turntable) properly — ask me for a photo and what's wrong before changing code. Flash with `tools/ota_update.sh`, never USB unless OTA is down. Stop and show me before every flash. I'm new to embedded — explain hardware constraints from first principles.
+> Read CLAUDE.md (Status section first), the last five sections of HARDWARE.md, and design/spotify-face-4-turntable.md. The board is at 192.168.1.14 running Spotify face 4 (Turntable, turning album-art label), committed on main. Next iteration is the 90 px label at 160 MHz, already costed in the Status section. Work it on a branch off main and merge when it is flashed and verified. Flash with `tools/ota_update.sh`, never USB unless OTA is down. Stop and show me before every flash. I'm new to embedded — explain hardware constraints from first principles.

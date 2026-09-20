@@ -570,3 +570,110 @@ equivalent switch, so prefer the script when the board must keep running.
 **If a factory reset ever does fire:** WiFi is re-entered through the failsafe AP
 `SmartClock-Setup`, but the Spotify client ID, secret and refresh token are gone and
 `tools/spotify_auth.py` has to be run again. Keep a copy in `secrets/` (git-ignored).
+
+## Spotify face 4 rebuilt as a turntable — measured on hardware 2026-09-19
+
+Build: **739,579 B flash (70.8%)**, 55,964 B static RAM (68.3%) — +2,428 B flash and +68 B
+RAM over `3c1201f`. Heap cost zero: the 480 B row buffer lives on the render's stack.
+Design and the reasons behind it: `design/spotify-face-4-turntable.md`. Geometry and every
+static pixel: `src/turntable.h`, checked on the PC by `tools/test_turntable.cpp`.
+
+### Numbers, from the device log over OTA (`/log`)
+| Measure | Result |
+|---|---|
+| Full render, fallback label (art not downloaded yet) | **129 ms** |
+| Full render with the 300 px JPEG decoded onto the label | **685 ms** |
+| Free DRAM sampled during the poll, 14 polls over ~5 min with two track changes | 8,384 B before the first art download, then steady **6,504–7,040 B** (IRAM 18,904 B, flat) |
+| Idle free DRAM after the 30 s stability window | 15,296 B (15,320 B right after OTA init) |
+
+- Poll-time DRAM did not trend down across two track changes and four full renders, so
+  the face adds no heap churn: the rows live on the stack and the text uses the same
+  transient `String`s as the other faces.
+- The 129 ms is 57,600 `tt::staticColor()` calls plus 240 one-row `pushImage()` calls on an
+  80 MHz core: about 2 µs per pixel, integer math only (the ring's angle test is a cross
+  product against the sweep's end vector scaled by 1024, so no `atan2f` per pixel).
+  Mirroring left/right would halve it; not needed.
+- The other ~556 ms is TJpg decoding a ~40 KB 300×300 baseline JPEG. **TJpg decodes every
+  MCU whatever the output scale**, so scale 2 (150 px) costs the same as full size, and face
+  0 pays the same for its 80 px slot. It is paid twice per track change: once when the
+  track changes (fallback label, 129 ms) and again ~2.7 s later when `artReady` flips.
+  That is the price of album art on this core; faces 1 and 2 never decode.
+
+### Rules this rebuild added
+- **Erase by re-asking one function.** Everything static is painted by `tt::staticColor()`
+  row by row; the arm, the spin marks and the ring's edge erase themselves by calling it,
+  so an erase can never disagree with the picture by a pixel. Where two moving things
+  would overlap, the one on top is skipped (`inPill`, `armCovers`), not painted and
+  restored. `drawCircle`/`drawArc` plus a black erase is what produced the first build's
+  notches and streaks.
+- **`setSwapBytes` trap.** `TJpgDec.setSwapBytes(true)` pre-swaps the decoder's output and
+  the TFT's own flag stays false, so `pushImage()` of native rgb565 rows needs
+  `tft.setSwapBytes(true)` around it, and any pixel written into a TJpg block (the label
+  mask) must be byte-swapped by hand. Wrong either way shows as wrong colours, not a crash.
+- **Geometry the panel cannot show goes through the PC test first.** The first build's
+  arm was an ellipse formula, never plotted; two minutes of `tools/test_turntable.cpp`
+  would have shown it. The test renders PPM frames and asserts the invariants (arm clear
+  of the label and pill, draw-then-erase exact, incremental ring equal to a fresh render).
+- **A straight tonearm always crosses the ring.** With the pivot outside the ring and the
+  stylus inside, no pivot position on 240 px keeps the arm clear, and even a stylus parked
+  at r=112 has its arm dip to r≈101 at 3 o'clock (lead-in: r≈98, run-out: r≈67, all from
+  `stylusAt()`). Design for the crossing rather than avoiding it: the ring painter skips
+  the arm, the arm's erase restores the ring.
+- **`/log` holds 16 lines.** The boot banner scrolls out within a minute; "Boot stability
+  confirmed" plus live `Spotify poll OK` lines are the proof the board is not in recovery
+  mode (recovery disables `spotifyLoop()`).
+
+## Spotify face 4: the label turns with the record — measured on hardware 2026-09-19
+
+User request after the rebuild: "want album art to also rotate". Build: **740,359 B flash
+(70.9%)**, 56,272 B static RAM (68.7%), +780 B flash and +308 B RAM over the static-label
+build (the row tables of the label). Design reasoning: `design/spotify-face-4-turntable.md`
+point 4. Code: `tt::LabelStore` / `tt::paintLabelFrame()` in `src/turntable.h`.
+
+### Why the label shrank from 120 px to 74 px
+Turning an image needs any source pixel for any destination pixel, every frame, so the
+art has to sit in RAM uncompressed at 2 B/px. 120 px = 22.6 KB: no heap on this board has
+that. Free DRAM is ~7 KB during a poll. The IRAM second heap has 18.9 KB free, tolerates
+32-bit accesses only, and BearSSL's `_alloc_iobuf()` prefers it and silently falls back to
+DRAM when it is short. 74 px = 4,281 px = **8,564 B**, two panel-order pixels per 32-bit
+word, allocated once under `HeapSelectIram` and kept. TJpg scale 4 of a 300 px cover is
+75 px, so the whole cover shows, downscaled, rather than a crop of its middle.
+
+### Numbers, from the serial boot log and `/log`
+| Measure | Result |
+|---|---|
+| Label store | 8,564 B in IRAM, ok; IRAM free after: **10,336 B** (was 18,904) |
+| Label frame, fallback colour (no art) | 8.9–9.2 ms |
+| Label frame, art (4,281 pixels turned, 73 `pushImage` rows) | **13.0 ms** |
+| Spin tick budget while playing | 13 ms of every 80 ms ≈ **16% of CPU** (marks add <1 ms) |
+| Full render without / with art | 150–157 ms / 711 ms (the JPEG decode, as before) |
+| Free DRAM during polls after the change | 8,328 B before any art, then **6,432–7,064 B over 20 polls and two track changes**, no trend (one 5,968 B sample early on, never repeated) |
+| Free IRAM during polls | **10,336 B, constant** |
+
+- **BearSSL's buffers are in DRAM in this build, not IRAM.** The poll samples IRAM before
+  the parse with the connection open, and it never moves: 18,904 B without the store,
+  10,336 B with it. The TLS-cost section above concluded from a dedicated probe that the
+  receive buffer lands in IRAM; that does not hold for the firmware as built today (the
+  probe may have measured a different allocation path, or its sample point differed). Net
+  effect: the label store does not compete with TLS at all, and ~10 KB of IRAM is still
+  free. Budget the two heaps from *this* log, not from the probe.
+- The 13 ms frame is ~1 µs per pixel of fixed-point index math plus volatile 32-bit
+  loads, plus the SPI. Halving the spin tick rate (8 degrees every 160 ms) would halve
+  the duty at the cost of a 5 px jump at the label's rim per step; not done, the loop
+  copes at 16%.
+- Serial capture of a deliberate reset: `/opt/homebrew/Cellar/esptool/5.4.0/libexec/bin/python
+  tools/bootlog.py /dev/cu.usbserial-10 75` — 75 s so the port closes (another reset)
+  only after the boot counter has cleared at 30 s. A DTR/RTS reset is `external-reset (6)`
+  and counts as a manual power cycle (1/5); a crash boot afterwards clears that counter.
+
+### The recovery-mode boot after this OTA, unexplained
+The first boot after `tools/ota_update.sh` came up in **recovery mode** (`Core boot complete
+in recovery mode`): the boot counter had reached 2, so the boot straight after the OTA had
+ended within 30 s. The RAM `/log` holds 16 lines and dies with the reset, so its `Reset
+reason:` line was gone. A deliberate serial reset then produced a clean normal-mode boot
+that polled, downloaded art, decoded it into the store, turned it and confirmed
+stability — so it is not a deterministic crash in the label code. The OTA before it (the
+static-label build, 25 min earlier) booted normally. Unresolved; two cheap defences for
+next time: keep `tools/bootlog.py` attached *through* an OTA so the first boot's banner
+and any exception dump are captured, and expose `ESP.getResetReason()` in
+`/version.json` so a rolled-over log is not the only witness (not built yet).
