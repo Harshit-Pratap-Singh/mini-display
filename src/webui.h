@@ -3818,13 +3818,13 @@ async function loadAllState() {
     feedLiveTimer = 0;
 
     try {
-        const [appResponse, dashboardResponse, feedsResponse, versionResponse, spaceResponse] = await Promise.all([
-            request("/app.json"),
-            request("/dashboard.json"),
-            request("/feeds.json"),
-            request("/version.json"),
-            request("/space.json")
-        ]);
+        // One at a time: the device serves requests one by one anyway, and it holds only one
+        // waiting connection (webserver.cpp), so parallel ones would wait for a SYN retry.
+        const appResponse = await request("/app.json");
+        const dashboardResponse = await request("/dashboard.json");
+        const feedsResponse = await request("/feeds.json");
+        const versionResponse = await request("/version.json");
+        const spaceResponse = await request("/space.json");
 
         if (!appResponse.ok || !dashboardResponse.ok || !feedsResponse.ok || !versionResponse.ok || !spaceResponse.ok) {
             throw new Error("State request failed");

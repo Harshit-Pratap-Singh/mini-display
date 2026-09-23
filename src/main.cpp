@@ -575,6 +575,10 @@ void setup() {
     const rst_info* resetInfo = ESP.getResetInfoPtr();
     uint8_t resetReason = resetInfo ? resetInfo->reason : 0xFF;
     logPrintf("Reset reason: %s (%u)", describeResetReason(resetReason), resetReason);
+    crashRecordOnBoot();
+    if (crashRecordText().length() > 0) {
+        logPrint(F("Crashed before this boot - details in /app.json \"crash\""));
+    }
 
 
 

@@ -15,7 +15,21 @@
 #include <LittleFS.h>
 #include <ctype.h>
 
-ESP8266WebServer server(WEB_SERVER_PORT);
+// ESP8266WebServer keeps the last request's arguments - a POST's whole JSON body - until the
+// next request arrives: ~3 KB of DRAM the next Spotify poll could not use. Freed after
+// every request instead (webserverHandle).
+class DisplayWebServer : public ESP8266WebServer {
+public:
+    using ESP8266WebServer::ESP8266WebServer;
+    void releaseRequestArgs() {
+        delete[] _currentArgs;
+        _currentArgs = nullptr;
+        _currentArgCount = 0;
+    }
+};
+
+DisplayWebServer server(WEB_SERVER_PORT);
+unsigned long lastWebActivityMs = 0;
 
 int currentBrightness = 70;
 int currentTheme = 0;
@@ -626,6 +640,8 @@ void handleAppJson() {
     json += "\"page\":" + String(displayState.currentPage) + ",";
     json += "\"photo\":\"" + String(displayCurrentPhotoPath()) + "\",";
     json += "\"heap\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"reset\":\"" + ESP.getResetInfo() + "\",";
+    json += "\"crash\":\"" + crashRecordText() + "\",";  // logger.cpp: decode with addr2line
     json += "\"gmtOffset\":" + String(appSettings.gmtOffset) + ",";
     json += "\"displayDraft\":" + String(displayHasDraftChanges() ? "true" : "false") + ",";
     json += "\"networkBusy\":" + String(webserverHasPendingNetworkAction() ? "true" : "false");
@@ -1368,11 +1384,26 @@ void webserverInit() {
               });
 
     server.begin();
+    // Listen again with room for one waiting connection, not the core's five. Waiting
+    // connections buffer their requests in DRAM while loop() is blocked, and a Spotify
+    // poll blocks it for ~1.4 s: a browser's parallel requests landing then took the last
+    // of the heap and crashed the TLS connect. Past the one, a new connection's SYN goes
+    // unanswered and the browser resends it a second later.
+    server.getServer().begin(WEB_SERVER_PORT, 1);
     Serial.println(F("Web server started"));
 }
 
 void webserverHandle() {
     server.handleClient();
+    server.releaseRequestArgs();
+    // Served, kept alive or waiting: any of them means the dashboard is in use.
+    if (server.client().connected() || server.getServer().hasClient()) {
+        lastWebActivityMs = millis();
+    }
+}
+
+unsigned long webserverLastActivityMs() {
+    return lastWebActivityMs;
 }
 
 void webserverProcessPendingActions() {

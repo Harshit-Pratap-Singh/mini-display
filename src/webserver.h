@@ -6,12 +6,12 @@
 
 void webserverInit();
 void webserverHandle();
+unsigned long webserverLastActivityMs();  // millis() of the last request served or waiting
 void webserverProcessPendingActions();
 bool webserverHasPendingNetworkAction();
 void webserverApplyEffectiveBrightness(bool syncPreference = false);
 void handleRoot();
 
-extern ESP8266WebServer server;
 extern int currentBrightness;
 extern int currentTheme;
 extern char currentImage[DISPLAY_PATH_BUFFER_SIZE];

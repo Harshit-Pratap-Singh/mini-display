@@ -7,8 +7,10 @@
 #include <base64.h>
 #include <umm_malloc/umm_heap_select.h>
 
+#include "display.h"
 #include "logger.h"
 #include "spotify_url.h"
+#include "webserver.h"
 
 SpotifyConfig spotifyConfig;
 SpotifyRuntime spotifyRuntime;
@@ -107,6 +109,69 @@ void freeHeaps(uint32_t &dram, uint32_t &iram) {
     { HeapSelectIram scope; iram = ESP.getFreeHeap(); }
 }
 
+// Every TLS connection makes three allocations the core cannot refuse gracefully: BearSSL's
+// 6,200 B stack as the client is built, then its 3,424 B session state and 1,496 B
+// certificate validator once the TCP connect returns. Refusing any of them calls abort(), a
+// restart - the crash records put the face-change restarts on the last two (HARDWARE.md).
+// tlsCanStart() tries all three first and hands them back; the allocator is best-fit, so
+// the real ones land in the same blocks. The TCP connect waits on the network, and what the
+// web server takes in meanwhile comes out of the same DRAM, so GuardedTlsClient holds the
+// last two through that wait. TLS also waits until the dashboard has been quiet a moment.
+constexpr size_t kBearSslStack = 6200;
+constexpr size_t kBearSslSession = 3424;
+constexpr size_t kBearSslValidator = 1496;
+constexpr size_t kTlsSmallObjects = 512;  // the client and TCP objects around them
+constexpr unsigned long kWebQuietMs = 3000;
+uint32_t tlsStartBlock = 0;  // largest free DRAM block when the last TLS operation began
+
+class GuardedTlsClient : public BearSSL::WiFiClientSecureCtx {
+public:
+    using BearSSL::WiFiClientSecureCtx::connect;
+    // WiFiClientSecureCtx::connect() is these three steps without the reservation.
+    int connect(const char *name, uint16_t port) override {
+        IPAddress ip;
+        if (!WiFi.hostByName(name, ip)) {
+            return 0;
+        }
+        void *session = malloc(kBearSslSession);
+        void *validator = session ? malloc(kBearSslValidator) : nullptr;
+        int connected = validator ? WiFiClient::connect(ip, port) : 0;
+        free(validator);  // nothing runs between here and _connectSSL() asking for them
+        free(session);
+        return connected ? _connectSSL(name) : 0;
+    }
+};
+
+bool tlsCanStart() {
+    // ponytail: a client polling this device more often than every 3 s would starve
+    // Spotify; cap the wait if one ever appears.
+    if (millis() - webserverLastActivityMs() < kWebQuietMs) {
+        return false;  // the dashboard is in use: its next request would land mid-connect
+    }
+    HeapSelectDram scope;
+    tlsStartBlock = ESP.getMaxFreeBlockSize();
+    void *stack = malloc(kBearSslStack);
+    void *session = stack ? malloc(kBearSslSession) : nullptr;
+    void *validator = session ? malloc(kBearSslValidator) : nullptr;
+    void *small = validator ? malloc(kTlsSmallObjects) : nullptr;  // own piece, as in TLS
+    free(small);
+    free(validator);
+    free(session);
+    free(stack);
+    if (small) {
+        return true;
+    }
+    static unsigned long lastLogMs = 0;
+    if (millis() - lastLogMs >= 10000) {
+        lastLogMs = millis();
+        logPrintf("Spotify waits: largest DRAM block %u B, TLS needs %u + %u + %u",
+                  static_cast<unsigned>(tlsStartBlock), static_cast<unsigned>(kBearSslStack),
+                  static_cast<unsigned>(kBearSslSession),
+                  static_cast<unsigned>(kBearSslValidator));
+    }
+    return false;
+}
+
 void setError(const char *message) {
     strncpy(spotifyRuntime.lastError, message, sizeof(spotifyRuntime.lastError) - 1);
     spotifyRuntime.lastError[sizeof(spotifyRuntime.lastError) - 1] = '\0';
@@ -158,7 +223,7 @@ int readHttpResponseHead(WiFiClient &client, int *retryAfterSeconds,
     return status;
 }
 
-void configureTlsClient(BearSSL::WiFiClientSecure &client, BearSSL::Session &session) {
+void configureTlsClient(BearSSL::WiFiClientSecureCtx &client, BearSSL::Session &session) {
     client.setInsecure();  // no cert store on a 4 MB board; see CLAUDE.md
     client.setBufferSizes(kTlsRxBuffer, kTlsTxBuffer);
     client.setSession(&session);
@@ -168,7 +233,7 @@ void configureTlsClient(BearSSL::WiFiClientSecure &client, BearSSL::Session &ses
 // Swaps the stored refresh token for a fresh access token. Spotify does NOT return a new
 // refresh token (verified 2026-09-18), so nothing is written back to LittleFS here.
 bool refreshAccessToken() {
-    BearSSL::WiFiClientSecure client;
+    GuardedTlsClient client;
     configureTlsClient(client, authSession);
     if (!client.connect(kAuthHost, 443)) {
         uint32_t dram = 0;
@@ -274,7 +339,7 @@ void markNothingPlaying() {
 
 bool fetchNowPlaying() {
     unsigned long startedMs = millis();
-    BearSSL::WiFiClientSecure client;
+    GuardedTlsClient client;
     configureTlsClient(client, apiSession);
     if (!client.connect(kApiHost, 443)) {
         uint32_t dram = 0;
@@ -402,8 +467,9 @@ bool fetchNowPlaying() {
         uint32_t dram = 0;
         uint32_t iram = 0;
         freeHeaps(dram, iram);
-        logPrintf("Spotify poll OK %ums, DRAM %u, IRAM %u",
-                  spotifyRuntime.lastPollLatencyMs, dram, iram);
+        logPrintf("Spotify poll OK %ums, DRAM %u, IRAM %u, start block %u",
+                  spotifyRuntime.lastPollLatencyMs, dram, iram,
+                  static_cast<unsigned>(tlsStartBlock));
     }
     return true;
 }
@@ -419,7 +485,7 @@ bool downloadArt() {
     }
 
     unsigned long startedMs = millis();
-    BearSSL::WiFiClientSecure client;
+    GuardedTlsClient client;
     configureTlsClient(client, artSession);
     if (!client.connect(host, 443)) {
         uint32_t dram = 0;
@@ -750,6 +816,9 @@ void spotifyLoop() {
     // Art downloads on its own pass. CLAUDE.md forbids two TLS connections at once, and
     // back to back they would block loop() for ~3 s; one per pass keeps that serialised.
     if (artDownloadDue()) {
+        if (!tlsCanStart()) {
+            return;  // asks again on a later pass
+        }
         if (!downloadArt()) {
             artFailures++;
             nextArtMs = millis() + kArtRetryMs;
@@ -764,6 +833,9 @@ void spotifyLoop() {
     if (static_cast<long>(millis() - nextPollMs) < 0) {
         return;
     }
+    if (!tlsCanStart()) {
+        return;
+    }
 
     // One TLS connection at a time, never two - see CLAUDE.md. Refresh first if due; the
     // poll then happens on the next pass rather than opening a second connection here.
@@ -774,7 +846,13 @@ void spotifyLoop() {
         return;
     }
 
+    bool wasPlaying = spotifyRuntime.playing;
     bool ok = fetchNowPlaying();
+    // Play-start jumps to the player (CLAUDE.md "Mode logic"). Here, not inside the poll,
+    // so the TLS connection is already closed when the face renders. No-op if unticked.
+    if (ok && spotifyRuntime.playing && !wasPlaying) {
+        displaySetPage(DASHBOARD_PAGE_SPOTIFY, true);
+    }
     if (!ok) {
         // 429 and the HTTP-status path set their own backoff. Only cover the failures
         // that did not - connect and parse errors - and give those the full minute.

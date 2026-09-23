@@ -677,3 +677,39 @@ static-label build, 25 min earlier) booted normally. Unresolved; two cheap defen
 next time: keep `tools/bootlog.py` attached *through* an OTA so the first boot's banner
 and any exception dump are captured, and expose `ESP.getResetReason()` in
 `/version.json` so a rolled-over log is not the only witness (not built yet).
+
+## Face-change restarts: TLS allocations that abort — measured on hardware 2026-09-24
+**Symptom:** changing the Spotify face in the dashboard sometimes rebooted the board; the
+reset reason read only "Software/System restart". **Cause, from the crash record:** reason
+254 (abort) after `operator new` failed inside `WiFiClientSecureCtx::_connectSSL()`, called
+from `fetchNowPlaying()` while `WiFiClient::connect()` waited on the network.
+
+Every TLS connection makes three DRAM allocations the core turns into `abort()` when
+refused (sizes from the crash records and a `sizeof` probe):
+
+| Allocation | Bytes | When |
+|---|---|---|
+| BearSSL stack (`stack_thunk_add_ref`) | 6,200 | client constructed |
+| `br_ssl_client_context` via `make_shared` | 3,424 | after the TCP connect |
+| `br_x509_insecure_context` via `make_shared` | 1,496 | right after that |
+
+The TCP connect yields, and whatever the web server takes in meanwhile comes out of the same
+DRAM. Two things made that likely: `ESP8266WebServer` keeps the last request's args (a POST's
+~2.9 KB JSON body) until the *next* request, and lwIP queued up to five waiting connections
+(TCP_WND 2,144 B each) while `loop()` was blocked. Reproduced three times (face change just
+before a poll; four parallel requests timed into the connect).
+
+**Fix:** request args freed after every request; web server backlog 1 (extra SYNs go
+unanswered and the browser retries); dashboard loads its state sequentially; before any TLS,
+wait for 3 s without web activity and trial-allocate the three blocks (best-fit allocator, so
+the real ones land in the same places); `GuardedTlsClient` holds the 3,424 + 1,496 B blocks
+through the TCP wait and frees them just before `_connectSSL()`. Survived 11 stress runs.
+
+**Watch for:** the largest free block at poll start ranges 7.8–12 KB (fragmented), so the
+trial must allocate separate pieces, never one combined block — that version stalled every
+poll. `Spotify waits:` in the log means the heap cannot currently hold TLS.
+
+**Diagnostics kept:** `/app.json` `crash` (RTC record from `custom_crash_callback`: reason,
+epc1, last failed alloc, code addresses on the stack). Decode with
+`xtensa-lx106-elf-addr2line -pfiaC -e .pio/build/esp12e/firmware.elf <addrs>` against the
+exact build that crashed. Reason 254 = abort/panic/`new` OOM, 253 = stack smash.
